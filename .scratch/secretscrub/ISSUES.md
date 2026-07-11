@@ -4,12 +4,13 @@ Parent PRD: [`PRD.md`](./PRD.md)
 Odds / gates: [`ODDS-IMPROVEMENT.md`](./ODDS-IMPROVEMENT.md)  
 Domain language: [`../../CONTEXT.md`](../../CONTEXT.md)
 
-Prefer AFK slices; grab lowest unblocked number. Spine **01 → 02 → 03 → 05** completed 2026-07-11.
+Prefer AFK slices; grab lowest unblocked number.
 
 | Progress | Slice |
 | --- | --- |
-| done | 01 scaffold, 02 placeholders, 03 detectors, 05 export |
-| next | 04 structured formats → 06 folder → 07 CLI contract → 08 stream/cancel |
+| done | 01 scaffold, 02 placeholders, 03 detectors, 05 export (2026-07-11) |
+| done | 04 structured formats, 06 folder, 07 CLI contract, 08 limits/cancel (2026-07-11) |
+| next | 09 desktop MVP → 10 review UI → 11 profiles → 12 security baseline |
 
 ## Dependency graph (tracer bullets)
 

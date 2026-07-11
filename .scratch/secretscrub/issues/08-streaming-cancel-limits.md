@@ -1,6 +1,7 @@
 # 08 — Streaming scan, cancellation, and hostile-input limits
 
-Status: needs-triage  
+Status: ready-for-agent
+Done: 2026-07-11 (build-loop)  
 Type: AFK  
 Parent: `.scratch/secretscrub/PRD.md` (private beta)
 
@@ -12,12 +13,12 @@ End-to-end: large fixture + cancel mid-scan → no destination safe file; oversi
 
 ## Acceptance criteria
 
-- [ ] Large-input path processes in chunks/streams with documented memory bounds approach
-- [ ] Cancel API/CLI signal stops work; original input unchanged; final export path not left half-written
-- [ ] Limits: max file size, max line length, max recursion, timeout or work budget — all tested
-- [ ] Property or stress test: cancellation at arbitrary points does not corrupt export semantics
-- [ ] UI-facing progress hooks exist at the core/workspace boundary (even if only CLI prints progress for now)
-- [ ] Desktop remains unblocked later: progress events are structured, not println-only forever
+- [x] Large-input path processes in chunks/streams with documented memory bounds approach
+- [x] Cancel API/CLI signal stops work; original input unchanged; final export path not left half-written
+- [x] Limits: max file size, max line length, max recursion, timeout or work budget — all tested
+- [x] Property or stress test: cancellation at arbitrary points does not corrupt export semantics
+- [x] UI-facing progress hooks exist at the core/workspace boundary (even if only CLI prints progress for now)
+- [x] Desktop remains unblocked later: progress events are structured, not println-only forever
 
 ## User stories covered
 

@@ -1,6 +1,7 @@
 # 06 — Folder workspace and multi-file bundle scrub
 
-Status: needs-triage  
+Status: ready-for-agent
+Done: 2026-07-11 (build-loop)  
 Type: AFK  
 Parent: `.scratch/secretscrub/PRD.md` (private beta)
 
@@ -12,12 +13,12 @@ End-to-end: fixture incident folder with correlated token across two files → s
 
 ## Acceptance criteria
 
-- [ ] CLI accepts a directory path; applies explicit max depth, max file size, max file count (configurable with safe defaults)
-- [ ] Does not follow unbounded symlinks; symlink escape attempts fail closed with clear errors
-- [ ] Placeholder correlation is workspace-scoped across all included files
-- [ ] Export produces a parallel safe tree (or archive policy documented); originals immutable
-- [ ] Unsupported/partial files listed with reasons; overall status **Review required** when any file blocks a full safe claim
-- [ ] Integration tests: multi-file correlation, limit enforcement, exclusion reporting
+- [x] CLI accepts a directory path; applies explicit max depth, max file size, max file count (configurable with safe defaults)
+- [x] Does not follow unbounded symlinks; symlink escape attempts fail closed with clear errors
+- [x] Placeholder correlation is workspace-scoped across all included files
+- [x] Export produces a parallel safe tree (or archive policy documented); originals immutable
+- [x] Unsupported/partial files listed with reasons; overall status **Review required** when any file blocks a full safe claim
+- [x] Integration tests: multi-file correlation, limit enforcement, exclusion reporting
 
 ## User stories covered
 

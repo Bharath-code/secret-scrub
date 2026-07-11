@@ -1,0 +1,4 @@
+service: checkout
+token: AKIAIOSFODNN7EXAMPLE
+meta:
+  region: us-east-1

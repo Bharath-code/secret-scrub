@@ -1,6 +1,7 @@
 # 07 — CLI exit codes and machine-readable findings
 
-Status: needs-triage  
+Status: ready-for-agent
+Done: 2026-07-11 (build-loop)  
 Type: AFK  
 Parent: `.scratch/secretscrub/PRD.md` (private beta)
 
@@ -12,12 +13,12 @@ End-to-end: black-box tests assert exit codes and JSON schema for success, revie
 
 ## Acceptance criteria
 
-- [ ] Documented exit code table (e.g. 0 clean, 2 review-required, 3 unsupported, 1 failure — exact mapping recorded in CLI help and README)
-- [ ] `--format json` (or equivalent) emits findings summary without secret values
-- [ ] JSON includes: findings list (type, placeholder, counts), per-file status if multi-file, safety status, versions
-- [ ] Stdin mode and path mode both covered
-- [ ] Black-box CLI tests are the source of truth for the contract
-- [ ] Free-CLI size/limit messaging can hook here if commercial limits apply later (document extension point only)
+- [x] Documented exit code table (e.g. 0 clean, 2 review-required, 3 unsupported, 1 failure — exact mapping recorded in CLI help and README)
+- [x] `--format json` (or equivalent) emits findings summary without secret values
+- [x] JSON includes: findings list (type, placeholder, counts), per-file status if multi-file, safety status, versions
+- [x] Stdin mode and path mode both covered
+- [x] Black-box CLI tests are the source of truth for the contract
+- [x] Free-CLI size/limit messaging can hook here if commercial limits apply later (document extension point only)
 
 ## User stories covered
 

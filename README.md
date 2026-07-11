@@ -63,13 +63,35 @@ echo 'aws_access_key_id=AKIAIOSFODNN7EXAMPLE' | cargo run -q -p secretscrub-cli 
 # Scrub a file → atomic safe copy + summary (source is never modified)
 cargo run -q -p secretscrub-cli -- scrub ./app.log -o ./app.safe.log --summary ./app.summary.json
 
+# Structure-preserving JSON / YAML / env (by extension)
+cargo run -q -p secretscrub-cli -- scrub ./config.json -o ./config.safe.json
+
+# Folder workspace → correlated safe tree
+cargo run -q -p secretscrub-cli -- scrub ./incident-bundle -o ./incident-bundle.safe --format json
+
+# Machine-readable findings only (no secret values)
+cargo run -q -p secretscrub-cli -- scrub ./app.log --format json
+
 # Tests
 cargo test
 ```
 
 Binary name: `secretscrub` (package `secretscrub-cli`).
 
-Processing is **on-device only**. Detection covers common patterns; it cannot guarantee every sensitive value is found. Review the safe copy before sharing. See [`docs/detector-changelog.md`](docs/detector-changelog.md).
+### Exit codes (automation contract)
+
+| Code | Meaning |
+| --- | --- |
+| **0** | Clean (`safe_copy_ready`) |
+| **1** | Failure (IO, empty input, limits, export error) |
+| **2** | Completed with **review required** |
+| **3** | **Unsupported** input (nothing safe produced, e.g. TOML/binary-only) |
+
+### Limits (folder / large input)
+
+`--max-depth`, `--max-file-size`, `--max-files`, `--max-line-length` (defaults in engine: depth 8, 10 MiB/file, 500 files, 1 MiB/line). Symlinks are not followed.
+
+Processing is **on-device only**. Detection covers common patterns; it cannot guarantee every sensitive value is found. Review the safe copy before sharing. See [`docs/detector-changelog.md`](docs/detector-changelog.md). **TOML is unsupported** in private beta.
 
 ## Development
 

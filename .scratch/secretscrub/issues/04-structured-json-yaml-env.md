@@ -1,6 +1,7 @@
 # 04 — Structure-preserving JSON / YAML / env transform
 
-Status: needs-triage  
+Status: ready-for-agent
+Done: 2026-07-11 (build-loop)  
 Type: AFK  
 Parent: `.scratch/secretscrub/PRD.md` (private beta)
 
@@ -12,12 +13,12 @@ End-to-end: CLI scrub of `fixture.json` / `fixture.yaml` / `fixture.env` → saf
 
 ## Acceptance criteria
 
-- [ ] Supported: JSON, YAML, environment files (and plain text/logs remain supported)
-- [ ] After redaction, valid JSON fixtures still parse; YAML fixtures still parse when input was valid
-- [ ] Keys/structure needed for debugging remain; only sensitive values are replaced
-- [ ] Malformed structured input → explicit non-safe / review-required outcome (not a fake success)
-- [ ] Contract tests for parse-roundtrip on supported fixtures; failure cases for broken input
-- [ ] TOML either in-scope with same contract or explicitly labeled unsupported for private beta (document choice in issue comments if deferred)
+- [x] Supported: JSON, YAML, environment files (and plain text/logs remain supported)
+- [x] After redaction, valid JSON fixtures still parse; YAML fixtures still parse when input was valid
+- [x] Keys/structure needed for debugging remain; only sensitive values are replaced
+- [x] Malformed structured input → explicit non-safe / review-required outcome (not a fake success)
+- [x] Contract tests for parse-roundtrip on supported fixtures; failure cases for broken input
+- [x] TOML either in-scope with same contract or explicitly labeled unsupported for private beta (document choice in issue comments if deferred)
 
 ## User stories covered
 
@@ -30,4 +31,4 @@ End-to-end: CLI scrub of `fixture.json` / `fixture.yaml` / `fixture.env` → saf
 
 ## Comments
 
--
+- 2026-07-11: TOML explicitly unsupported in private beta (`ContentFormat::TomlUnsupported`, exit code 3). JSON/YAML/env structure-preserving path shipped.

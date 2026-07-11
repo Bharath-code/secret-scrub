@@ -24,6 +24,46 @@ pub enum StructureStatus {
     Unsupported,
 }
 
+/// CLI / automation exit codes (stable contract).
+///
+/// | Code | Meaning |
+/// |------|---------|
+/// | 0 | Clean completion (`safe_copy_ready`) |
+/// | 1 | Execution failure (IO, empty input, cancel during export, etc.) |
+/// | 2 | Completed with `review_required` |
+/// | 3 | Unsupported input (nothing safe produced) |
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ExitCodeKind {
+    Clean = 0,
+    Failure = 1,
+    ReviewRequired = 2,
+    Unsupported = 3,
+}
+
+impl ExitCodeKind {
+    pub fn from_statuses(
+        safety: SafetyStatus,
+        fully_unsupported: bool,
+        hard_failure: bool,
+    ) -> Self {
+        if hard_failure {
+            return ExitCodeKind::Failure;
+        }
+        if fully_unsupported {
+            return ExitCodeKind::Unsupported;
+        }
+        match safety {
+            SafetyStatus::SafeCopyReady => ExitCodeKind::Clean,
+            SafetyStatus::ReviewRequired => ExitCodeKind::ReviewRequired,
+        }
+    }
+
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
 /// One aggregated finding for a sensitive value class within a workspace scrub.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
@@ -43,6 +83,17 @@ pub struct SummaryFinding {
     pub occurrences: usize,
 }
 
+/// Per-file report for multi-file workspaces (no secret values).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileReport {
+    pub path: String,
+    pub status: String,
+    pub reason: Option<String>,
+    pub structure_status: StructureStatus,
+    pub safety_status: SafetyStatus,
+    pub findings_count: usize,
+}
+
 /// Machine-readable safety summary written next to an export.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SafetySummary {
@@ -53,6 +104,9 @@ pub struct SafetySummary {
     /// Counts of replacements grouped by detector type (not by secret value).
     pub replacement_counts: BTreeMap<String, usize>,
     pub findings: Vec<SummaryFinding>,
+    /// Present for folder/workspace scrubs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<FileReport>>,
     /// Human-readable limits disclaimer (non-claim language).
     pub disclaimer: String,
 }
@@ -63,6 +117,16 @@ impl SafetySummary {
         safety_status: SafetyStatus,
         structure_status: StructureStatus,
         rule_pack_version: &str,
+    ) -> Self {
+        Self::build(findings, safety_status, structure_status, rule_pack_version, None)
+    }
+
+    pub fn build(
+        findings: &[Finding],
+        safety_status: SafetyStatus,
+        structure_status: StructureStatus,
+        rule_pack_version: &str,
+        files: Option<Vec<FileReport>>,
     ) -> Self {
         let mut replacement_counts: BTreeMap<String, usize> = BTreeMap::new();
         for f in findings {
@@ -85,6 +149,7 @@ impl SafetySummary {
             structure_status,
             replacement_counts,
             findings: summary_findings,
+            files,
             disclaimer: "SecretScrub redacts common patterns locally. It cannot guarantee every sensitive value is found. Review the safe copy before sharing.".to_string(),
         }
     }

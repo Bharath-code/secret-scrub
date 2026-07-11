@@ -1,0 +1,8 @@
+{
+  "service": "payments",
+  "aws_key": "AKIAIOSFODNN7EXAMPLE",
+  "nested": {
+    "email": "user@example.com"
+  },
+  "count": 3
+}
