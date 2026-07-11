@@ -1,0 +1,5 @@
+# Should not over-redact common non-secrets
+version=1.2.3-rc1
+build_id=not-a-secret-value
+url=https://example.com/path
+count=42

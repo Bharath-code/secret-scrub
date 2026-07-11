@@ -1,0 +1,59 @@
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Node / frontend (Tauri UI later)
+node_modules/
+dist/
+dist-ssr/
+*.local
+.npm
+.pnpm-store/
+
+# Env and secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+secrets/
+.credentials/
+
+# Local agent / scratch runtime (keep intentional docs under .scratch/<feature>/)
+.scratch/**/tmp/
+.scratch/**/*.log
+
+# Test / coverage
+coverage/
+lcov.info
+*.profraw
+
+# Tauri / packaging
+*.dmg
+*.app
+*.exe
+*.msi
+*.AppImage
+*.deb
+*.rpm
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

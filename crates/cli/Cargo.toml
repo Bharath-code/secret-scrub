@@ -1,0 +1,22 @@
+[package]
+name = "secretscrub-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SecretScrub command-line interface"
+default-run = "secretscrub"
+
+[[bin]]
+name = "secretscrub"
+path = "src/main.rs"
+
+[dependencies]
+secretscrub-core = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+assert_cmd = "2.0"
+predicates = "3.1"
+serde_json = { workspace = true }
