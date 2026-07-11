@@ -95,6 +95,8 @@ Processing is **on-device only**. Detection covers common patterns; it cannot gu
 
 **Verify it works:** step-by-step checks in [`docs/HOW-TO-VERIFY.md`](docs/HOW-TO-VERIFY.md).
 
+**Marketing site:** open [`landing/index.html`](landing/index.html) or `npx serve landing`.
+
 ## Development
 
 Workspace layout:
