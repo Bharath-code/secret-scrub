@@ -1,6 +1,7 @@
 # SecretScrub — Business Plan and Market Rationale
 
-Status: needs-triage
+Status: needs-triage  
+Odds plan: see `ODDS-IMPROVEMENT.md`, `TRUST.md`, `VALIDATION.md`, `COMPETITIVE.md`
 
 ## Executive Summary
 
@@ -209,15 +210,21 @@ The first revenue goal is not scale. It is proof that users pay for reduced risk
 
 ## Risks and Mitigations
 
-| Risk | Mitigation |
-| --- | --- |
-| Users expect perfect detection | Use explicit “review required” states, document limits, and never claim universal safety. |
-| Enterprise scanners appear to make the product redundant | Position around artifact preparation and local export, not organization-wide detection. |
-| Low-frequency need reduces retention | Start with high-frequency AI/debugging users and offer useful local profiles and repeatable workflows. |
-| Detector false positives damage trust | Provide side-by-side review, confidence states, safe one-export exceptions, and fixture-based regression tests. |
-| Detector false negatives create harm | Clearly communicate scope, improve rule packs conservatively, and retain user review as part of the workflow. |
-| Support burden grows with file formats | Keep initial formats narrow; label unsupported files rather than attempting unsafe transformations. |
-| Consumer distribution is difficult | Start with direct founder/agency validation before relying on broad app-store acquisition. |
+Operational playbook: `ODDS-IMPROVEMENT.md`. Honesty rules: `TRUST.md`. Positioning: `COMPETITIVE.md`. Validation log: `VALIDATION.md`.
+
+| Risk | Severity | Mitigation | Proof we watch |
+| --- | --- | --- | --- |
+| Users expect perfect detection | Critical | Explicit “review required”; banned marketing claims; export summary states detector scope and pack version | Zero “guaranteed safe” copy; onboarding comprehension |
+| False negatives create harm | Critical | Precision-first detectors; FN intake without real secrets; every FN → fixture; no silent rule widening | FN fixture count; time-to-fix for reported misses |
+| Enterprise scanners look redundant | High | Own **safe-share export**, not org detection; battle card in every pitch | Win rate when buyer already has GG/TruffleHog |
+| Free regex/scripts are “good enough” | High | Beat them on multi-file placeholders, structure preserve, review UX, honest unsupported | Time-to-safe-copy vs script on standard fixture |
+| Low-frequency need reduces retention | High | ICP = weekly AI/debug sharers first; profiles + custom rules for return visits | 30-day second-use rate in beta |
+| Detector false positives damage trust | Medium | Side-by-side review; one-export exceptions; fixture regression | FP reports per release; export cancel-for-doubt rate |
+| Support burden from formats | Medium | Narrow v1 formats; label unsupported instead of unsafe transforms | Unsupported-file rate; support tickets needing originals (target 0) |
+| Consumer distribution is hard | Medium | Free CLI + communities + intent content; no app-store dependency early | Channel → beta → paid attribution |
+| macOS signing / WebView platform risk | Medium | CLI-first beta; early notarization dry-run; default-deny Tauri capabilities | Signed offline install works before public download |
+| Price signal wrong ($39 too low/high) | Low | Interview price ladder; revisit after first 5 paid | Van Westendorp notes; conversion at list price |
+| Build before demand | Critical | 15 interviews + gates before heavy desktop spend | Gate table in `ODDS-IMPROVEMENT.md` / `VALIDATION.md` |
 
 ## Sources and Evidence
 

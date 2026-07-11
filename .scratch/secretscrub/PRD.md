@@ -1,6 +1,8 @@
 # SecretScrub — Local Safe-Share Workspace
 
-Status: needs-triage
+Status: needs-triage  
+Odds plan: see `ODDS-IMPROVEMENT.md`, `TRUST.md`, `VALIDATION.md`, `COMPETITIVE.md`  
+Implementation issues: see `ISSUES.md` and `issues/` (tracer-bullet slices 01–12)
 
 ## Problem Statement
 
