@@ -93,6 +93,8 @@ Binary name: `secretscrub` (package `secretscrub-cli`).
 
 Processing is **on-device only**. Detection covers common patterns; it cannot guarantee every sensitive value is found. Review the safe copy before sharing. See [`docs/detector-changelog.md`](docs/detector-changelog.md). **TOML is unsupported** in private beta.
 
+**Verify it works:** step-by-step checks in [`docs/HOW-TO-VERIFY.md`](docs/HOW-TO-VERIFY.md).
+
 ## Development
 
 Workspace layout:
