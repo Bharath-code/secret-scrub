@@ -10,10 +10,11 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 use secretscrub_core::{
-    atomic_write, ensure_not_source, export_workspace_tree, scrub_with_path, scrub_workspace,
-    write_safety_summary, CancelFlag, ExitCodeKind, ExportError, FileInclusion, FileReport,
-    ProgressEvent, RulePack, SafetySummary, ScrubConfig, ScrubError, StructureStatus,
-    WorkspaceError, WorkspaceLimits, WorkspaceResult, PRODUCT_VERSION, RULE_PACK_VERSION,
+    atomic_write, ensure_not_source, export_workspace_tree, looks_binary, scrub_with_path,
+    scrub_workspace, write_safety_summary, CancelFlag, ContentFormat, ExitCodeKind, ExportError,
+    FileInclusion, FileReport, ProgressEvent, RulePack, SafetyStatus, SafetySummary, ScrubConfig,
+    ScrubError, ScrubResult, StructureStatus, WorkspaceError, WorkspaceLimits, WorkspaceResult,
+    PRODUCT_VERSION, RULE_PACK_VERSION,
 };
 use std::fs;
 use std::io::{self, Read, Write};
@@ -66,10 +67,6 @@ enum Commands {
         #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
 
-        /// Fixed session seed for placeholder indices (testing). Default: random.
-        #[arg(long = "session-seed", hide = true)]
-        session_seed: Option<u64>,
-
         /// Max directory depth for folder scrubs.
         #[arg(long = "max-depth")]
         max_depth: Option<usize>,
@@ -109,7 +106,6 @@ struct ScrubRun {
     summary_path: Option<PathBuf>,
     force: bool,
     format: OutputFormat,
-    seed: u64,
     limits: WorkspaceLimits,
     progress: bool,
 }
@@ -123,7 +119,6 @@ fn run() -> Result<ExitCodeKind, String> {
             summary,
             force,
             format,
-            session_seed,
             max_depth,
             max_file_size,
             max_files,
@@ -149,7 +144,6 @@ fn run() -> Result<ExitCodeKind, String> {
                 summary_path: summary,
                 force,
                 format,
-                seed: session_seed.unwrap_or_else(random_seed),
                 limits,
                 progress,
             })
@@ -165,18 +159,55 @@ fn scrub_command(run: ScrubRun) -> Result<ExitCodeKind, String> {
     }
 }
 
+/// Bytes classified as text (with the same binary sniff used for workspace
+/// scrubs) or rejected as unsupported before any scrub attempt.
+enum BytesCheck {
+    Text(String),
+    Unsupported(&'static str),
+}
+
+fn check_bytes(bytes: Vec<u8>) -> BytesCheck {
+    if looks_binary(&bytes) {
+        return BytesCheck::Unsupported("binary or non-text content is unsupported");
+    }
+    match String::from_utf8(bytes) {
+        Ok(s) => BytesCheck::Text(s),
+        Err(_) => BytesCheck::Unsupported("invalid UTF-8"),
+    }
+}
+
+/// Synthetic result for input rejected by the binary/UTF-8 check: no safe
+/// copy is ever produced for it.
+fn unsupported_result(reason: &str) -> ScrubResult {
+    ScrubResult {
+        text: String::new(),
+        findings: Vec::new(),
+        safety_status: SafetyStatus::ReviewRequired,
+        structure_status: StructureStatus::Unsupported,
+        rule_pack_version: RULE_PACK_VERSION.to_string(),
+        note: Some(reason.to_string()),
+        format: ContentFormat::BinaryUnsupported,
+    }
+}
+
 fn scrub_stdin(run: &ScrubRun) -> Result<ExitCodeKind, String> {
-    let mut buf = String::new();
+    let mut bytes = Vec::new();
     io::stdin()
-        .read_to_string(&mut buf)
+        .read_to_end(&mut bytes)
         .map_err(|e| format!("read stdin: {e}"))?;
-    if buf.len() as u64 > run.limits.max_file_size {
+    if bytes.len() as u64 > run.limits.max_file_size {
         return Err(format!(
             "stdin exceeds max_file_size {}",
             run.limits.max_file_size
         ));
     }
-    for line in buf.lines() {
+    let content = match check_bytes(bytes) {
+        BytesCheck::Text(s) => s,
+        BytesCheck::Unsupported(reason) => {
+            return finish_single(unsupported_result(reason), None, run);
+        }
+    };
+    for line in content.lines() {
         if line.len() > run.limits.max_line_length {
             return Err(format!(
                 "line exceeds max_line_length {}",
@@ -184,7 +215,10 @@ fn scrub_stdin(run: &ScrubRun) -> Result<ExitCodeKind, String> {
             ));
         }
     }
-    finish_single(&buf, None, run)
+    let result = scrub_with_path(&content, None, &ScrubConfig::default()).map_err(|e| match e {
+        ScrubError::EmptyInput => "input is empty".to_string(),
+    })?;
+    finish_single(result, None, run)
 }
 
 fn scrub_file(path: &Path, run: &ScrubRun) -> Result<ExitCodeKind, String> {
@@ -196,8 +230,13 @@ fn scrub_file(path: &Path, run: &ScrubRun) -> Result<ExitCodeKind, String> {
             run.limits.max_file_size
         ));
     }
-    let content =
-        fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let bytes = fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let content = match check_bytes(bytes) {
+        BytesCheck::Text(s) => s,
+        BytesCheck::Unsupported(reason) => {
+            return finish_single(unsupported_result(reason), Some(path), run);
+        }
+    };
     for line in content.lines() {
         if line.len() > run.limits.max_line_length {
             return Err(format!(
@@ -206,22 +245,19 @@ fn scrub_file(path: &Path, run: &ScrubRun) -> Result<ExitCodeKind, String> {
             ));
         }
     }
-    finish_single(&content, Some(path), run)
+    let result = scrub_with_path(&content, Some(path), &ScrubConfig::default()).map_err(
+        |e| match e {
+            ScrubError::EmptyInput => "input is empty".to_string(),
+        },
+    )?;
+    finish_single(result, Some(path), run)
 }
 
 fn finish_single(
-    content: &str,
+    result: ScrubResult,
     source: Option<&Path>,
     run: &ScrubRun,
 ) -> Result<ExitCodeKind, String> {
-    let config = ScrubConfig {
-        session_seed: run.seed,
-        ..ScrubConfig::default()
-    };
-    let result = scrub_with_path(content, source, &config).map_err(|e| match e {
-        ScrubError::EmptyInput => "input is empty".to_string(),
-    })?;
-
     let fully_unsupported = result.structure_status == StructureStatus::Unsupported;
 
     let summary = SafetySummary::from_scrub(
@@ -311,7 +347,6 @@ fn scrub_dir(root: &Path, run: &ScrubRun) -> Result<ExitCodeKind, String> {
 
     let result = scrub_workspace(
         root,
-        run.seed,
         RulePack::BuiltinV1,
         &run.limits,
         &cancel,
@@ -402,18 +437,4 @@ fn export_err(e: ExportError) -> String {
 
 fn ws_err(e: WorkspaceError) -> String {
     e.to_string()
-}
-
-fn random_seed() -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let mut h = DefaultHasher::new();
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0)
-        .hash(&mut h);
-    std::process::id().hash(&mut h);
-    h.finish()
 }

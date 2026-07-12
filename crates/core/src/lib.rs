@@ -16,7 +16,7 @@ mod workspace;
 
 pub use cancel::{CancelFlag, ProgressEvent};
 pub use export::{atomic_write, ensure_not_source, write_safety_summary, ExportError};
-pub use format::{format_from_path, ContentFormat};
+pub use format::{format_from_path, looks_binary, ContentFormat};
 pub use limits::WorkspaceLimits;
 pub use rulepack::{RulePack, RULE_PACK_VERSION};
 pub use scrub::{scrub, scrub_with_path, ScrubConfig, ScrubError, ScrubResult};

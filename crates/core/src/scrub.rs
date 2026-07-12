@@ -18,10 +18,6 @@ pub enum ScrubError {
 #[derive(Debug, Clone)]
 pub struct ScrubConfig {
     pub rule_pack: RulePack,
-    /// No-op, kept for API/CLI compatibility. Placeholder indices are
-    /// per-type sequential in first-seen order; correlation is per-workspace
-    /// by design.
-    pub session_seed: u64,
     /// Optional format override; when None, inferred from path or plain text.
     pub format: Option<ContentFormat>,
 }
@@ -30,7 +26,6 @@ impl Default for ScrubConfig {
     fn default() -> Self {
         Self {
             rule_pack: RulePack::BuiltinV1,
-            session_seed: 0,
             format: None,
         }
     }
@@ -106,14 +101,7 @@ mod tests {
     #[test]
     fn repeated_value_correlated() {
         let input = format!("a={AWS} mid b={AWS}");
-        let result = scrub(
-            &input,
-            &ScrubConfig {
-                session_seed: 42,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let result = scrub(&input, &ScrubConfig::default()).unwrap();
         let f = result
             .findings
             .iter()

@@ -12,17 +12,10 @@ fn fixture(name: &str) -> String {
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
-fn cfg(seed: u64) -> ScrubConfig {
-    ScrubConfig {
-        session_seed: seed,
-        ..ScrubConfig::default()
-    }
-}
-
 #[test]
 fn aws_log_redacts_key_keeps_context() {
     let input = fixture("aws_log.txt");
-    let out = scrub(&input, &cfg(0)).unwrap();
+    let out = scrub(&input, &ScrubConfig::default()).unwrap();
     assert!(!out.text.contains("AKIAIOSFODNN7EXAMPLE"));
     assert!(out.text.contains("request_id=abc-123"));
     assert!(out.text.contains("[AWS_ACCESS_KEY#"));
@@ -32,7 +25,7 @@ fn aws_log_redacts_key_keeps_context() {
 #[test]
 fn repeated_aws_correlated() {
     let input = fixture("repeated_aws.txt");
-    let out = scrub(&input, &cfg(7)).unwrap();
+    let out = scrub(&input, &ScrubConfig::default()).unwrap();
     let f = out
         .findings
         .iter()
@@ -49,7 +42,7 @@ fn repeated_aws_correlated() {
 #[test]
 fn multi_secret_fixture() {
     let input = fixture("multi_secret.txt");
-    let out = scrub(&input, &cfg(1)).unwrap();
+    let out = scrub(&input, &ScrubConfig::default()).unwrap();
     for t in [
         "AWS_ACCESS_KEY",
         "GITHUB_TOKEN",
@@ -77,7 +70,7 @@ fn multi_secret_fixture() {
 #[test]
 fn false_positive_fixture_preserves_benign() {
     let input = fixture("false_positive.txt");
-    let out = scrub(&input, &cfg(0)).unwrap();
+    let out = scrub(&input, &ScrubConfig::default()).unwrap();
     // Benign version strings and non-secret ids should remain
     assert!(out.text.contains("version=1.2.3-rc1"));
     assert!(out.text.contains("build_id=not-a-secret-value"));
@@ -91,18 +84,18 @@ fn false_positive_fixture_preserves_benign() {
 }
 
 #[test]
-fn output_is_seed_independent() {
+fn output_is_deterministic_across_runs() {
     let input = fixture("repeated_aws.txt");
-    let a = scrub(&input, &cfg(1)).unwrap();
-    let b = scrub(&input, &cfg(2)).unwrap();
-    // session_seed is a no-op: indices are per-type sequential in
-    // first-seen order, identical across seeds and runs.
+    let a = scrub(&input, &ScrubConfig::default()).unwrap();
+    let b = scrub(&input, &ScrubConfig::default()).unwrap();
+    // Placeholder indices are per-type sequential in first-seen order, so
+    // identical input reproduces identical output every run.
     assert_eq!(a.text, b.text);
     assert_eq!(a.findings, b.findings);
 }
 
 #[test]
 fn rule_pack_version_present() {
-    let out = scrub("AKIAIOSFODNN7EXAMPLE\n", &cfg(0)).unwrap();
+    let out = scrub("AKIAIOSFODNN7EXAMPLE\n", &ScrubConfig::default()).unwrap();
     assert_eq!(out.rule_pack_version, secretscrub_core::rule_pack_version());
 }

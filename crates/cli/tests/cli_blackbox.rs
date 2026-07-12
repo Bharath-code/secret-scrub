@@ -10,7 +10,7 @@ const AWS: &str = "AKIAIOSFODNN7EXAMPLE";
 #[test]
 fn stdin_redacts_to_stdout() {
     cargo_bin_cmd!("secretscrub")
-        .args(["scrub", "--session-seed", "0"])
+        .args(["scrub"])
         .write_stdin(format!("before {AWS} after\n"))
         .assert()
         .code(0)
@@ -32,8 +32,6 @@ fn file_to_output_leaves_source_untouched() {
             src.to_str().unwrap(),
             "-o",
             dest.to_str().unwrap(),
-            "--session-seed",
-            "0",
         ])
         .assert()
         .code(0);
@@ -56,8 +54,6 @@ fn refuses_existing_destination_without_force() {
             src.to_str().unwrap(),
             "-o",
             dest.to_str().unwrap(),
-            "--session-seed",
-            "0",
         ])
         .assert()
         .code(1)
@@ -82,8 +78,6 @@ fn summary_json_shape_no_secrets() {
             dest.to_str().unwrap(),
             "--summary",
             summary.to_str().unwrap(),
-            "--session-seed",
-            "0",
         ])
         .assert()
         .code(0);
@@ -107,8 +101,6 @@ fn format_json_stdout_contract() {
             src.to_str().unwrap(),
             "--format",
             "json",
-            "--session-seed",
-            "0",
         ])
         .assert()
         .code(0);
@@ -133,8 +125,6 @@ fn review_required_exit_code_for_bad_json() {
             src.to_str().unwrap(),
             "--format",
             "json",
-            "--session-seed",
-            "0",
         ])
         .assert()
         .code(2);
@@ -152,8 +142,6 @@ fn unsupported_toml_exit_code() {
             src.to_str().unwrap(),
             "--format",
             "json",
-            "--session-seed",
-            "0",
         ])
         .assert()
         .code(3);
@@ -172,8 +160,6 @@ fn folder_workspace_correlated_export() {
             dir.path().to_str().unwrap(),
             "-o",
             out.to_str().unwrap(),
-            "--session-seed",
-            "0",
             "--format",
             "json",
         ])
@@ -203,8 +189,6 @@ fn sensitive_filename_forces_review_required_exit_code() {
             dir.path().to_str().unwrap(),
             "-o",
             out.to_str().unwrap(),
-            "--session-seed",
-            "0",
         ])
         .assert()
         .code(2);
@@ -222,17 +206,39 @@ fn unremarkable_filename_stays_clean_exit_code() {
             dir.path().to_str().unwrap(),
             "-o",
             out.to_str().unwrap(),
-            "--session-seed",
-            "0",
         ])
         .assert()
         .code(0);
 }
 
 #[test]
+fn binary_file_unsupported_exit_code() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("blob.log");
+    // Valid UTF-8 (no NUL bytes) but mostly control characters, matching
+    // the workspace path's looks_binary sniff.
+    fs::write(&src, [1u8, 2, 3, 4, 5, 6, 7, 11, 12, 14, 15]).unwrap();
+
+    let assert = cargo_bin_cmd!("secretscrub")
+        .args(["scrub", src.to_str().unwrap()])
+        .assert()
+        .code(3);
+    assert!(assert.get_output().stdout.is_empty());
+}
+
+#[test]
+fn binary_stdin_unsupported_exit_code() {
+    cargo_bin_cmd!("secretscrub")
+        .args(["scrub"])
+        .write_stdin(vec![0u8, 1, 2, 3])
+        .assert()
+        .code(3);
+}
+
+#[test]
 fn empty_input_failure_exit() {
     cargo_bin_cmd!("secretscrub")
-        .args(["scrub", "--session-seed", "0"])
+        .args(["scrub"])
         .write_stdin("")
         .assert()
         .code(1);
@@ -250,8 +256,6 @@ fn oversize_file_fails() {
             src.to_str().unwrap(),
             "--max-file-size",
             "50",
-            "--session-seed",
-            "0",
         ])
         .assert()
         .code(1)

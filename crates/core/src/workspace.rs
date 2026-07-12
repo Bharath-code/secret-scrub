@@ -81,7 +81,6 @@ impl WorkspaceResult {
 /// Scrub a directory as one correlated workspace.
 pub fn scrub_workspace(
     root: &Path,
-    _session_seed: u64,
     rule_pack: RulePack,
     limits: &WorkspaceLimits,
     cancel: &CancelFlag,
@@ -665,7 +664,6 @@ mod tests {
         let cancel = CancelFlag::new();
         let result = scrub_workspace(
             dir.path(),
-            0,
             RulePack::BuiltinV1,
             &WorkspaceLimits::for_tests(),
             &cancel,
@@ -699,7 +697,6 @@ mod tests {
         let cancel = CancelFlag::new();
         let result = scrub_workspace(
             dir.path(),
-            0,
             RulePack::BuiltinV1,
             &WorkspaceLimits::for_tests(),
             &cancel,
@@ -732,7 +729,6 @@ mod tests {
         };
         let result = scrub_workspace(
             dir.path(),
-            0,
             RulePack::BuiltinV1,
             &WorkspaceLimits::for_tests(),
             &cancel,
@@ -749,7 +745,6 @@ mod tests {
         let cancel = CancelFlag::new();
         let result = scrub_workspace(
             dir.path(),
-            0,
             RulePack::BuiltinV1,
             &WorkspaceLimits::for_tests(),
             &cancel,
@@ -772,7 +767,6 @@ mod tests {
         let cancel = CancelFlag::new();
         let result = scrub_workspace(
             dir.path(),
-            0,
             RulePack::BuiltinV1,
             &WorkspaceLimits::for_tests(),
             &cancel,
@@ -790,7 +784,7 @@ mod tests {
         limits.max_file_size = 100;
         let cancel = CancelFlag::new();
         let result =
-            scrub_workspace(dir.path(), 0, RulePack::BuiltinV1, &limits, &cancel, None).unwrap();
+            scrub_workspace(dir.path(), RulePack::BuiltinV1, &limits, &cancel, None).unwrap();
         assert_eq!(result.files[0].outcome.inclusion, FileInclusion::Excluded);
         assert_eq!(result.safety_status, SafetyStatus::ReviewRequired);
     }

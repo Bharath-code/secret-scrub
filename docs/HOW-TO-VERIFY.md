@@ -19,7 +19,7 @@ All tests should pass. Coverage includes detectors, placeholders, JSON/YAML/env 
 
 ```bash
 echo 'aws_access_key_id=AKIAIOSFODNN7EXAMPLE request=abc' \
-  | cargo run -q -p secretscrub-cli -- scrub --session-seed 0
+  | cargo run -q -p secretscrub-cli -- scrub
 ```
 
 **Expect:** the key becomes something like `[AWS_ACCESS_KEY#1]`; `request=abc` stays.
@@ -28,7 +28,7 @@ echo 'aws_access_key_id=AKIAIOSFODNN7EXAMPLE request=abc' \
 
 ```bash
 cargo run -q -p secretscrub-cli -- scrub ./fixtures/aws_log.txt \
-  -o /tmp/aws.safe.log --summary /tmp/aws.summary.json --session-seed 0
+  -o /tmp/aws.safe.log --summary /tmp/aws.summary.json
 
 # Original still has the fake key
 grep AKIA ./fixtures/aws_log.txt
@@ -44,7 +44,7 @@ cat /tmp/aws.summary.json
 
 ```bash
 cargo run -q -p secretscrub-cli -- scrub ./fixtures/sample.json \
-  -o /tmp/out.json --session-seed 0
+  -o /tmp/out.json
 
 python3 -c "import json; print(json.load(open('/tmp/out.json')))"
 ```
@@ -54,8 +54,8 @@ python3 -c "import json; print(json.load(open('/tmp/out.json')))"
 Also useful:
 
 ```bash
-cargo run -q -p secretscrub-cli -- scrub ./fixtures/sample.yaml -o /tmp/out.yaml --session-seed 0
-cargo run -q -p secretscrub-cli -- scrub ./fixtures/sample.env -o /tmp/out.env --session-seed 0
+cargo run -q -p secretscrub-cli -- scrub ./fixtures/sample.yaml -o /tmp/out.yaml
+cargo run -q -p secretscrub-cli -- scrub ./fixtures/sample.env -o /tmp/out.env
 ```
 
 ### Folder workspace (correlated placeholders)
@@ -65,7 +65,7 @@ mkdir -p /tmp/ss-bundle
 cp fixtures/aws_log.txt fixtures/repeated_aws.txt /tmp/ss-bundle/
 
 cargo run -q -p secretscrub-cli -- scrub /tmp/ss-bundle \
-  -o /tmp/ss-safe --format json --session-seed 0
+  -o /tmp/ss-safe --format json
 
 ls /tmp/ss-safe
 # Same secret across files should share one placeholder token
@@ -74,15 +74,15 @@ ls /tmp/ss-safe
 ### Exit codes
 
 ```bash
-cargo run -q -p secretscrub-cli -- scrub ./fixtures/sample.json --format json --session-seed 0 >/dev/null
+cargo run -q -p secretscrub-cli -- scrub ./fixtures/sample.json --format json >/dev/null
 echo $?   # 0 = clean
 
 printf '{bad' > /tmp/x.json
-cargo run -q -p secretscrub-cli -- scrub /tmp/x.json --format json --session-seed 0 >/dev/null
+cargo run -q -p secretscrub-cli -- scrub /tmp/x.json --format json >/dev/null
 echo $?   # 2 = review required
 
 printf 'k="v"\n' > /tmp/x.toml
-cargo run -q -p secretscrub-cli -- scrub /tmp/x.toml --format json --session-seed 0 >/dev/null
+cargo run -q -p secretscrub-cli -- scrub /tmp/x.toml --format json >/dev/null
 echo $?   # 3 = unsupported
 ```
 
@@ -96,7 +96,7 @@ echo $?   # 3 = unsupported
 ### Machine-readable findings only
 
 ```bash
-cargo run -q -p secretscrub-cli -- scrub ./fixtures/multi_secret.txt --format json --session-seed 0
+cargo run -q -p secretscrub-cli -- scrub ./fixtures/multi_secret.txt --format json
 ```
 
 **Expect:** JSON on stdout with `findings`, `replacement_counts`, `rule_pack_version`; **no** raw `AKIA…` or other secret material.
@@ -106,7 +106,7 @@ cargo run -q -p secretscrub-cli -- scrub ./fixtures/multi_secret.txt --format js
 ```bash
 # Should fail with max_file_size (exit 1)
 cargo run -q -p secretscrub-cli -- scrub ./fixtures/multi_secret.txt \
-  --max-file-size 10 --session-seed 0
+  --max-file-size 10
 ```
 
 ## 3. Install binary (optional)

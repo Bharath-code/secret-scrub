@@ -75,7 +75,7 @@ fn toml_unsupported() {
 }
 
 #[test]
-fn cross_file_correlation_stable_across_seeds_and_runs() {
+fn cross_file_correlation_stable_across_runs() {
     const KEY1: &str = "AKIAIOSFODNN7EXAMPLE";
     const KEY2: &str = "AKIAZZZZZZZZZZZZZZZZ";
 
@@ -84,10 +84,9 @@ fn cross_file_correlation_stable_across_seeds_and_runs() {
     fs::write(dir.path().join("b.log"), format!("again={KEY1}\n")).unwrap();
 
     let cancel = CancelFlag::new();
-    let run = |seed: u64| {
+    let run = || {
         scrub_workspace(
             dir.path(),
-            seed,
             RulePack::BuiltinV1,
             &WorkspaceLimits::for_tests(),
             &cancel,
@@ -105,7 +104,7 @@ fn cross_file_correlation_stable_across_seeds_and_runs() {
             .unwrap_or_else(|| panic!("scrubbed text for {name}"))
     };
 
-    let first = run(0);
+    let first = run();
     let (a0, b0) = (text_of(&first, "a.log"), text_of(&first, "b.log"));
 
     let ph = |text: &str, prefix: &str| -> String {
@@ -120,10 +119,12 @@ fn cross_file_correlation_stable_across_seeds_and_runs() {
     assert_eq!(ph1, ph1_b, "same value must map to same placeholder in both files");
     assert_ne!(ph1, ph2, "distinct values must get distinct placeholders");
 
-    for seed in 1..=20 {
-        let r = run(seed);
-        assert_eq!(text_of(&r, "a.log"), a0, "seed {seed} changed a.log output");
-        assert_eq!(text_of(&r, "b.log"), b0, "seed {seed} changed b.log output");
+    // Placeholder indices are first-seen sequential, so identical input
+    // reproduces identical output across independent runs.
+    for run_n in 1..=5 {
+        let r = run();
+        assert_eq!(text_of(&r, "a.log"), a0, "run {run_n} changed a.log output");
+        assert_eq!(text_of(&r, "b.log"), b0, "run {run_n} changed b.log output");
     }
 }
 
@@ -135,7 +136,6 @@ fn cancelled_force_export_preserves_existing_destination() {
     let cancel = CancelFlag::new();
     let result = scrub_workspace(
         src.path(),
-        0,
         RulePack::BuiltinV1,
         &WorkspaceLimits::for_tests(),
         &cancel,
@@ -175,7 +175,6 @@ fn workspace_export_tree() {
     let cancel = CancelFlag::new();
     let result = scrub_workspace(
         dir.path(),
-        0,
         RulePack::BuiltinV1,
         &WorkspaceLimits::for_tests(),
         &cancel,
@@ -216,7 +215,6 @@ fn force_export_leaves_no_staging_or_aside_leftovers() {
     let cancel = CancelFlag::new();
     let result = scrub_workspace(
         src.path(),
-        0,
         RulePack::BuiltinV1,
         &WorkspaceLimits::for_tests(),
         &cancel,
@@ -252,7 +250,6 @@ fn force_export_swap_failure_restores_destination_and_cleans_staging() {
     let cancel = CancelFlag::new();
     let result = scrub_workspace(
         src.path(),
-        0,
         RulePack::BuiltinV1,
         &WorkspaceLimits::for_tests(),
         &cancel,
