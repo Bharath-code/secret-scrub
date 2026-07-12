@@ -59,7 +59,7 @@ fn detectors() -> &'static [Detector] {
             det(
                 "GENERIC_SECRET",
                 40,
-                r#"(?i)\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key|password|passwd|client[_-]?secret)\b\s*[=:]\s*([^\s#'"]{8,})"#,
+                r#"(?i)\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key|password|passwd|client[_-]?secret)\b\s*[=:]\s*(?:"([^"]{8,})"|'([^']{8,})'|([^\s#'"]{8,}))"#,
             ),
             det(
                 "EMAIL",
@@ -89,7 +89,11 @@ pub fn find_candidates(text: &str) -> Vec<Candidate> {
 
     for d in detectors() {
         for caps in d.regex.captures_iter(text) {
-            let (start, end, value) = if let Some(m) = caps.get(1) {
+            // Multiple alternative capture groups (e.g. quoted vs bare value
+            // branches): first non-empty group wins.
+            let (start, end, value) = if let Some(m) =
+                (1..caps.len()).find_map(|i| caps.get(i))
+            {
                 (m.start(), m.end(), m.as_str().to_string())
             } else if let Some(m) = caps.get(0) {
                 (m.start(), m.end(), m.as_str().to_string())
@@ -169,5 +173,45 @@ mod tests {
         let c = find_candidates(text);
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].detector_type, "STRIPE_SECRET");
+    }
+
+    #[test]
+    fn generic_secret_quoted_double() {
+        let text = r#"password="supersecret1""#;
+        let c = find_candidates(text);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].detector_type, "GENERIC_SECRET");
+        assert_eq!(c[0].value, "supersecret1");
+        // Quotes fall outside the match span, so they survive replacement.
+        assert_eq!(&text[c[0].start..c[0].end], "supersecret1");
+    }
+
+    #[test]
+    fn generic_secret_quoted_single() {
+        let text = "api_key: 'abcdefgh1234'";
+        let c = find_candidates(text);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].value, "abcdefgh1234");
+    }
+
+    #[test]
+    fn generic_secret_bare_still_works() {
+        let text = "password=hunter2secret99 rest";
+        let c = find_candidates(text);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].value, "hunter2secret99");
+    }
+
+    #[test]
+    fn generic_secret_short_quoted_not_matched() {
+        assert!(find_candidates(r#"password="short""#).is_empty());
+    }
+
+    #[test]
+    fn generic_secret_quoted_alternation_yields_single_match() {
+        // Alternation branches are mutually exclusive at a given start
+        // position, so a quoted value is never counted twice.
+        let text = r#"password="supersecret1" trailing text"#;
+        assert_eq!(find_candidates(text).len(), 1);
     }
 }
