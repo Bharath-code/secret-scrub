@@ -22,6 +22,48 @@ struct Detector {
     regex: Regex,
 }
 
+/// Secret-ish key/field names, shared between the GENERIC_SECRET regex
+/// (name=value / name: value in plain text and env files) and structural
+/// key-aware redaction (JSON/YAML object keys). Underscore is the
+/// canonical separator; [`is_secret_key_name`] normalizes away
+/// underscores, hyphens, and case so `apiKey`, `API-KEY`, and `api_key`
+/// all match the same entry.
+const SECRET_KEY_WORDS: &[&str] = &[
+    "api_key",
+    "secret_key",
+    "access_token",
+    "auth_token",
+    "private_key",
+    "password",
+    "passwd",
+    "client_secret",
+];
+
+/// True when `key` (a JSON/YAML object key) is one of the secret-ish
+/// names GENERIC_SECRET also recognizes, regardless of separator style
+/// or case (`api_key`, `api-key`, `apiKey`, `API_KEY`).
+pub fn is_secret_key_name(key: &str) -> bool {
+    let normalized: String = key
+        .chars()
+        .filter(|c| *c != '_' && *c != '-')
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    SECRET_KEY_WORDS
+        .iter()
+        .any(|w| w.replace('_', "") == normalized)
+}
+
+fn generic_secret_pattern() -> String {
+    let names = SECRET_KEY_WORDS
+        .iter()
+        .map(|w| w.replace('_', "[_-]?"))
+        .collect::<Vec<_>>()
+        .join("|");
+    format!(
+        r#"(?i)\b(?:{names})\b\s*[=:]\s*(?:"([^"]{{8,}})"|'([^']{{8,}})'|([^\s#'"]{{8,}}))"#
+    )
+}
+
 fn detectors() -> &'static [Detector] {
     static DETECTORS: OnceLock<Vec<Detector>> = OnceLock::new();
     DETECTORS.get_or_init(|| {
@@ -56,11 +98,7 @@ fn detectors() -> &'static [Detector] {
                 r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b",
             ),
             // Generic env/header secrets: name=value with secret-ish names (capture value only).
-            det(
-                "GENERIC_SECRET",
-                40,
-                r#"(?i)\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key|password|passwd|client[_-]?secret)\b\s*[=:]\s*(?:"([^"]{8,})"|'([^']{8,})'|([^\s#'"]{8,}))"#,
-            ),
+            det("GENERIC_SECRET", 40, &generic_secret_pattern()),
             det(
                 "EMAIL",
                 50,
@@ -213,5 +251,31 @@ mod tests {
         // position, so a quoted value is never counted twice.
         let text = r#"password="supersecret1" trailing text"#;
         assert_eq!(find_candidates(text).len(), 1);
+    }
+
+    #[test]
+    fn secret_key_name_matches_common_spellings() {
+        for key in [
+            "password",
+            "passwd",
+            "api_key",
+            "api-key",
+            "apiKey",
+            "API_KEY",
+            "secret_key",
+            "access_token",
+            "auth_token",
+            "private_key",
+            "client_secret",
+        ] {
+            assert!(is_secret_key_name(key), "{key} should be secret-ish");
+        }
+    }
+
+    #[test]
+    fn secret_key_name_rejects_unrelated_names() {
+        for key in ["username", "id", "password_hint", "note"] {
+            assert!(!is_secret_key_name(key), "{key} should not be secret-ish");
+        }
     }
 }

@@ -1,6 +1,6 @@
 //! Structure-preserving transforms for JSON, YAML, and env files.
 
-use crate::detect::find_candidates;
+use crate::detect::{find_candidates, is_secret_key_name};
 use crate::format::ContentFormat;
 use crate::placeholder::PlaceholderAllocator;
 use crate::types::{Finding, SafetyStatus, StructureStatus};
@@ -149,12 +149,36 @@ fn redact_json_value(
             }
         }
         JsonValue::Object(map) => {
-            for (_k, v) in map.iter_mut() {
+            for (k, v) in map.iter_mut() {
+                if is_secret_key_name(k) {
+                    if let JsonValue::String(s) = v {
+                        redact_whole_value(s, allocator, counts);
+                        continue;
+                    }
+                }
                 redact_json_value(v, allocator, counts);
             }
         }
         _ => {}
     }
+}
+
+/// Redact a full string value unconditionally (key-aware path): used when
+/// the surrounding key name is secret-ish, so even a bare value with no
+/// detector match still gets a GENERIC_SECRET placeholder.
+fn redact_whole_value(
+    s: &mut String,
+    allocator: &mut PlaceholderAllocator,
+    counts: &mut HashMap<(String, String), usize>,
+) {
+    if s.is_empty() {
+        return;
+    }
+    let ph = allocator.placeholder_for("GENERIC_SECRET", s);
+    *counts
+        .entry(("GENERIC_SECRET".to_string(), s.clone()))
+        .or_insert(0) += 1;
+    *s = ph;
 }
 
 fn scrub_yaml(content: &str, allocator: &mut PlaceholderAllocator) -> StructuredScrub {
@@ -215,7 +239,14 @@ fn redact_yaml_value(
             // Redact values only — keep keys for debugging structure.
             let keys: Vec<serde_norway::Value> = map.keys().cloned().collect();
             for k in keys {
-                if let Some(v) = map.get_mut(k) {
+                let key_is_secret = k.as_str().is_some_and(is_secret_key_name);
+                if let Some(v) = map.get_mut(&k) {
+                    if key_is_secret {
+                        if let serde_norway::Value::String(s) = v {
+                            redact_whole_value(s, allocator, counts);
+                            continue;
+                        }
+                    }
                     redact_yaml_value(v, allocator, counts);
                 }
             }
@@ -330,5 +361,81 @@ mod tests {
         assert!(out.text.starts_with("AWS_ACCESS_KEY_ID="));
         assert!(!out.text.contains("AKIAIOSFODNN7EXAMPLE"));
         assert!(out.text.contains("# comment"));
+    }
+
+    #[test]
+    fn json_key_aware_redacts_bare_password_value() {
+        let mut a = PlaceholderAllocator::new();
+        let input = r#"{"password": "hunter2secret99"}"#;
+        let out = scrub_structured(input, ContentFormat::Json, &mut a);
+        assert_eq!(out.structure_status, StructureStatus::Valid);
+        let v: JsonValue = serde_json::from_str(&out.text).unwrap();
+        let ph = v["password"].as_str().unwrap();
+        assert!(ph.starts_with("[GENERIC_SECRET#"));
+        assert!(!out.text.contains("hunter2secret99"));
+    }
+
+    #[test]
+    fn json_key_aware_ignores_non_string_values() {
+        let mut a = PlaceholderAllocator::new();
+        let input = r#"{"password": 12345678, "auth_token": true}"#;
+        let out = scrub_structured(input, ContentFormat::Json, &mut a);
+        let v: JsonValue = serde_json::from_str(&out.text).unwrap();
+        assert_eq!(v["password"], 12345678);
+        assert_eq!(v["auth_token"], true);
+    }
+
+    #[test]
+    fn json_without_secret_keys_is_unaffected() {
+        let mut a = PlaceholderAllocator::new();
+        let input = r#"{"username": "alice", "n": 1}"#;
+        let out = scrub_structured(input, ContentFormat::Json, &mut a);
+        let v: JsonValue = serde_json::from_str(&out.text).unwrap();
+        assert_eq!(v["username"], "alice");
+        assert_eq!(v["n"], 1);
+    }
+
+    #[test]
+    fn json_secret_key_same_value_shares_placeholder_across_calls() {
+        let mut a = PlaceholderAllocator::new();
+        let out1 = scrub_structured(
+            r#"{"password": "hunter2secret99"}"#,
+            ContentFormat::Json,
+            &mut a,
+        );
+        let out2 = scrub_structured(
+            r#"{"passwd": "hunter2secret99"}"#,
+            ContentFormat::Json,
+            &mut a,
+        );
+        let v1: JsonValue = serde_json::from_str(&out1.text).unwrap();
+        let v2: JsonValue = serde_json::from_str(&out2.text).unwrap();
+        assert_eq!(v1["password"], v2["passwd"]);
+    }
+
+    #[test]
+    fn yaml_key_aware_redacts_bare_password_value() {
+        let mut a = PlaceholderAllocator::new();
+        let input = "password: hunter2secret99\nusername: alice\n";
+        let out = scrub_structured(input, ContentFormat::Yaml, &mut a);
+        assert_eq!(out.structure_status, StructureStatus::Valid);
+        assert!(!out.text.contains("hunter2secret99"));
+        assert!(out.text.contains("[GENERIC_SECRET#"));
+        assert!(out.text.contains("alice"));
+        let v: serde_norway::Value = serde_norway::from_str(&out.text).unwrap();
+        assert!(v["password"].is_string());
+    }
+
+    #[test]
+    fn yaml_key_aware_ignores_non_string_and_nested() {
+        let mut a = PlaceholderAllocator::new();
+        let input = "password: 12345678\nsecret_key:\n  nested: hunter2secret99\n";
+        let out = scrub_structured(input, ContentFormat::Yaml, &mut a);
+        // Numbers under a secret key pass through unchanged.
+        assert!(out.text.contains("12345678"));
+        // Nested containers under a secret key are walked normally, not
+        // blanket-redacted, so the inner bare value is untouched (no
+        // detector fires on a bare string with no key context here).
+        assert!(out.text.contains("hunter2secret99"));
     }
 }

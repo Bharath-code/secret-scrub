@@ -25,6 +25,13 @@ Trust is the product. One overclaim or silent miss can end the company. This doc
 
 - JSON and YAML **keys are not scanned** — only values are. A secret used as a
   key (or a key name that is itself sensitive) passes through unchanged.
+- When a key name looks secret-ish (`password`, `passwd`, `api_key`,
+  `secret_key`, `access_token`, `auth_token`, `private_key`,
+  `client_secret` — any underscore/hyphen/case spelling), the entire
+  **string** value under that key is redacted, even if no detector
+  pattern matches the bare value. Non-string values (numbers, booleans)
+  under a secret-ish key are left unchanged, and nested objects/arrays
+  under a secret-ish key are walked normally rather than blanket-redacted.
 - Files over the per-file size limit (10 MiB) are excluded and reported, not
   scanned. Processing is whole-file, not streaming.
 
