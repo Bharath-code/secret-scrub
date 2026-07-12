@@ -208,3 +208,87 @@ fn workspace_export_tree() {
     assert!(a.contains(ph.as_str()));
     assert!(b.contains(ph.as_str()));
 }
+
+#[test]
+fn force_export_leaves_no_staging_or_aside_leftovers() {
+    let src = tempfile::tempdir().unwrap();
+    fs::write(src.path().join("a.log"), "x=AKIAIOSFODNN7EXAMPLE\n").unwrap();
+    let cancel = CancelFlag::new();
+    let result = scrub_workspace(
+        src.path(),
+        0,
+        RulePack::BuiltinV1,
+        &WorkspaceLimits::for_tests(),
+        &cancel,
+        None,
+    )
+    .unwrap();
+
+    let out = tempfile::tempdir().unwrap();
+    fs::write(out.path().join("old.txt"), "previous export").unwrap();
+
+    export_workspace_tree(&result, out.path(), true, &cancel).unwrap();
+
+    assert!(out.path().join("a.log").exists());
+    assert!(!out.path().join("old.txt").exists());
+    let parent = out.path().parent().unwrap();
+    assert!(!fs::read_dir(parent).unwrap().any(|e| {
+        let name = e.unwrap().file_name().to_string_lossy().into_owned();
+        name.starts_with(".secretscrub-export-")
+    }));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn force_export_swap_failure_restores_destination_and_cleans_staging() {
+    // ponytail: uses `chflags uchg` (macOS/BSD-only) to make the rename of
+    // an existing, otherwise-writable destination fail deterministically,
+    // so this test doesn't run on Linux CI — the logic itself is
+    // platform-independent, only the failure trigger isn't.
+    use std::process::Command;
+
+    let src = tempfile::tempdir().unwrap();
+    fs::write(src.path().join("a.log"), "x=AKIAIOSFODNN7EXAMPLE\n").unwrap();
+    let cancel = CancelFlag::new();
+    let result = scrub_workspace(
+        src.path(),
+        0,
+        RulePack::BuiltinV1,
+        &WorkspaceLimits::for_tests(),
+        &cancel,
+        None,
+    )
+    .unwrap();
+
+    let parent = tempfile::tempdir().unwrap();
+    let dest = parent.path().join("existing");
+    fs::create_dir_all(&dest).unwrap();
+    fs::write(dest.join("precious.txt"), "keep me").unwrap();
+
+    // Immutable flag on the destination itself blocks renaming it aside,
+    // even though the parent directory stays writable (so staging setup
+    // still succeeds and the failure hits the intended rename step).
+    assert!(Command::new("chflags")
+        .args(["uchg", dest.to_str().unwrap()])
+        .status()
+        .unwrap()
+        .success());
+
+    let err = export_workspace_tree(&result, &dest, true, &cancel);
+
+    Command::new("chflags")
+        .args(["nouchg", dest.to_str().unwrap()])
+        .status()
+        .unwrap();
+
+    assert!(err.is_err(), "export over an immutable destination must fail");
+    assert_eq!(
+        fs::read_to_string(dest.join("precious.txt")).unwrap(),
+        "keep me",
+        "a failed swap must never lose the pre-existing destination"
+    );
+    assert!(!fs::read_dir(parent.path()).unwrap().any(|e| {
+        let name = e.unwrap().file_name().to_string_lossy().into_owned();
+        name.starts_with(".secretscrub-export-")
+    }));
+}

@@ -118,10 +118,29 @@ pub fn scrub_workspace(
             ));
         }
 
-        let rel = entry
-            .strip_prefix(root)
-            .unwrap_or(entry.as_path())
-            .to_path_buf();
+        // Fail closed: a path that can't be relativized against root must
+        // never be joined onto the staging dir at export time (that would
+        // write outside it). Exclude it explicitly instead of falling back
+        // to the absolute path. Unreachable via WalkDir today, but this is
+        // the last line of defense if that ever changes.
+        let rel = match entry.strip_prefix(root) {
+            Ok(r) => r.to_path_buf(),
+            Err(_) => {
+                artifacts.push(FileArtifact {
+                    relative_path: entry.clone(),
+                    outcome: FileOutcome {
+                        path: entry.to_string_lossy().replace('\\', "/"),
+                        inclusion: FileInclusion::Excluded,
+                        reason: Some("path outside workspace root".into()),
+                        structure_status: StructureStatus::NotApplicable,
+                        safety_status: SafetyStatus::ReviewRequired,
+                        findings_count: 0,
+                    },
+                    text: None,
+                });
+                continue;
+            }
+        };
         let rel_str = rel.to_string_lossy().replace('\\', "/");
 
         emit(
@@ -581,15 +600,56 @@ pub fn export_workspace_tree(
         return Err(WorkspaceError::Cancelled);
     }
 
-    if dest_root.exists() {
-        if dest_root.is_dir() {
-            fs::remove_dir_all(dest_root)?;
-        } else {
-            fs::remove_file(dest_root)?;
+    // staging.keep() disables the TempDir's auto-cleanup-on-drop; from here
+    // on every path (success or failure) must explicitly remove it.
+    let staging_path = staging.keep();
+
+    if !dest_root.exists() {
+        if let Err(e) = fs::rename(&staging_path, dest_root) {
+            let _ = fs::remove_dir_all(&staging_path);
+            return Err(WorkspaceError::Io(e));
+        }
+        return Ok(());
+    }
+
+    // Force-swap over an existing destination: rename it aside first so
+    // there is never a window where the destination is gone but the
+    // replacement isn't in place yet. If the final swap fails, restore
+    // the aside copy so the user never loses their previous export.
+    let aside = aside_path(dest_root);
+    if let Err(e) = fs::rename(dest_root, &aside) {
+        let _ = fs::remove_dir_all(&staging_path);
+        return Err(WorkspaceError::Io(e));
+    }
+    match fs::rename(&staging_path, dest_root) {
+        Ok(()) => {
+            if aside.is_dir() {
+                let _ = fs::remove_dir_all(&aside);
+            } else {
+                let _ = fs::remove_file(&aside);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            let _ = fs::rename(&aside, dest_root);
+            let _ = fs::remove_dir_all(&staging_path);
+            Err(WorkspaceError::Io(e))
         }
     }
-    fs::rename(staging.keep(), dest_root)?;
-    Ok(())
+}
+
+/// Sibling path to rename the old destination to during a force-swap.
+/// Includes the current PID so concurrent exports in the same parent
+/// directory don't collide.
+fn aside_path(dest_root: &Path) -> PathBuf {
+    let file_name = dest_root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    dest_root.with_file_name(format!(
+        ".secretscrub-export-aside-{}-{file_name}",
+        std::process::id()
+    ))
 }
 
 #[cfg(test)]
