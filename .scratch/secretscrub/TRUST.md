@@ -20,6 +20,14 @@ Trust is the product. One overclaim or silent miss can end the company. This doc
 - “Detects **common** provider tokens, JWTs, emails, IPs, and configured custom rules”  
 - “Replaces repeated values with **consistent placeholders within one workspace**”  
 - “Preserves structure for **supported** formats; marks unsupported files for review”  
+
+## Known detection limits (state these plainly)
+
+- JSON and YAML **keys are not scanned** — only values are. A secret used as a
+  key (or a key name that is itself sensitive) passes through unchanged.
+- Files over the per-file size limit (10 MiB) are excluded and reported, not
+  scanned. Processing is whole-file, not streaming.
+
 - “Never overwrites your original input”  
 - “Optional network only for license/update paths you can disable after activation (when those features ship)”  
 
@@ -34,7 +42,7 @@ Trust is the product. One overclaim or silent miss can end the company. This doc
 | No silent “all clear” | Unsupported, partial, or low-confidence → Review required |
 | Conservative rule changes | Widening a detector requires fixtures + changelog |
 | Scope is versioned | Export summary includes rule-pack / product version |
-| Cross-export privacy | Placeholders are **not** stable across separate scrubs |
+| Correlation scope | Placeholder maps are never persisted; correlation is guaranteed only within one workspace scrub. Indices are first-seen sequential, so re-scrubbing identical input reproduces the same placeholders — do not present placeholder numbering as an anonymity layer |
 
 ### Severity of misses
 

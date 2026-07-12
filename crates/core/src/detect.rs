@@ -43,10 +43,12 @@ fn detectors() -> &'static [Detector] {
                 10,
                 r"\bsk_(?:live|test)_[A-Za-z0-9]{16,}\b",
             ),
+            // No hyphens in the body (rejects slug-like names) and digits
+            // required via post-filter in find_candidates.
             det(
                 "OPENAI_API_KEY",
                 10,
-                r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b",
+                r"\bsk-(?:proj-)?[A-Za-z0-9_]{20,}\b",
             ),
             det(
                 "JWT",
@@ -95,9 +97,10 @@ pub fn find_candidates(text: &str) -> Vec<Candidate> {
                 continue;
             };
 
-            // Stripe keys also match a broad sk- OpenAI pattern; prefer Stripe.
+            // Entropy floor: real OpenAI keys always carry digits; slug-like
+            // identifiers (sk-formatting-helper) usually don't.
             if d.detector_type == "OPENAI_API_KEY"
-                && (value.starts_with("sk_live_") || value.starts_with("sk_test_"))
+                && value.chars().filter(char::is_ascii_digit).count() < 2
             {
                 continue;
             }
@@ -147,6 +150,17 @@ mod tests {
         let text = "key=AKIAIOSFODNN7EXAMPLE rest";
         let c = find_candidates(text);
         assert!(c.iter().any(|x| x.detector_type == "AWS_ACCESS_KEY"));
+    }
+
+    #[test]
+    fn slug_like_sk_name_not_openai() {
+        assert!(find_candidates("tool=sk-formatting-helper-utils-v2 done").is_empty());
+    }
+
+    #[test]
+    fn openai_key_detected() {
+        let c = find_candidates("openai=sk-proj-abcdefghijklmnopqrstuvwxyz012345");
+        assert!(c.iter().any(|x| x.detector_type == "OPENAI_API_KEY"));
     }
 
     #[test]

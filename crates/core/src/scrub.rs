@@ -18,8 +18,9 @@ pub enum ScrubError {
 #[derive(Debug, Clone)]
 pub struct ScrubConfig {
     pub rule_pack: RulePack,
-    /// Seeds placeholder index permutation. Use a fixed value in tests;
-    /// production CLI should use a random seed per invocation.
+    /// No-op, kept for API/CLI compatibility. Placeholder indices are
+    /// per-type sequential in first-seen order; correlation is per-workspace
+    /// by design.
     pub session_seed: u64,
     /// Optional format override; when None, inferred from path or plain text.
     pub format: Option<ContentFormat>,
@@ -67,7 +68,7 @@ pub fn scrub_with_path(
             .unwrap_or(ContentFormat::PlainText)
     });
 
-    let mut allocator = PlaceholderAllocator::new(config.session_seed);
+    let mut allocator = PlaceholderAllocator::new();
     let structured = scrub_structured(content, format, &mut allocator);
     let findings = findings_from_counts(structured.counts, &allocator);
 

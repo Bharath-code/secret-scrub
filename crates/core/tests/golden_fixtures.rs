@@ -81,6 +81,8 @@ fn false_positive_fixture_preserves_benign() {
     // Benign version strings and non-secret ids should remain
     assert!(out.text.contains("version=1.2.3-rc1"));
     assert!(out.text.contains("build_id=not-a-secret-value"));
+    // Slug-like sk- names are not OpenAI keys
+    assert!(out.text.contains("sk-formatting-helper-utils-v2"));
     // No AWS/GitHub shaped tokens in this fixture
     assert!(!out
         .findings
@@ -89,18 +91,14 @@ fn false_positive_fixture_preserves_benign() {
 }
 
 #[test]
-fn sessions_with_different_seeds_not_guaranteed_identical_indices() {
+fn output_is_seed_independent() {
     let input = fixture("repeated_aws.txt");
     let a = scrub(&input, &cfg(1)).unwrap();
     let b = scrub(&input, &cfg(2)).unwrap();
-    // Same number of findings and within-session correlation
-    assert_eq!(a.findings.len(), b.findings.len());
-    // Different seeds permute value→index mapping, so full safe text differs
-    // (sorted finding placeholder labels alone may still look like #1,#2).
-    assert_ne!(
-        a.text, b.text,
-        "different session seeds should change which value maps to which index"
-    );
+    // session_seed is a no-op: indices are per-type sequential in
+    // first-seen order, identical across seeds and runs.
+    assert_eq!(a.text, b.text);
+    assert_eq!(a.findings, b.findings);
 }
 
 #[test]

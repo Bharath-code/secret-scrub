@@ -158,11 +158,11 @@ fn redact_json_value(
 }
 
 fn scrub_yaml(content: &str, allocator: &mut PlaceholderAllocator) -> StructuredScrub {
-    match serde_yaml::from_str::<serde_yaml::Value>(content) {
+    match serde_norway::from_str::<serde_norway::Value>(content) {
         Ok(mut value) => {
             let mut counts = HashMap::new();
             redact_yaml_value(&mut value, allocator, &mut counts);
-            match serde_yaml::to_string(&value) {
+            match serde_norway::to_string(&value) {
                 Ok(text) => StructuredScrub {
                     text,
                     counts,
@@ -196,24 +196,24 @@ fn scrub_yaml(content: &str, allocator: &mut PlaceholderAllocator) -> Structured
 }
 
 fn redact_yaml_value(
-    value: &mut serde_yaml::Value,
+    value: &mut serde_norway::Value,
     allocator: &mut PlaceholderAllocator,
     counts: &mut HashMap<(String, String), usize>,
 ) {
     match value {
-        serde_yaml::Value::String(s) => {
+        serde_norway::Value::String(s) => {
             let (new_s, c) = redact_plain(s, allocator);
             merge_counts(counts, c);
             *s = new_s;
         }
-        serde_yaml::Value::Sequence(items) => {
+        serde_norway::Value::Sequence(items) => {
             for item in items {
                 redact_yaml_value(item, allocator, counts);
             }
         }
-        serde_yaml::Value::Mapping(map) => {
+        serde_norway::Value::Mapping(map) => {
             // Redact values only — keep keys for debugging structure.
-            let keys: Vec<serde_yaml::Value> = map.keys().cloned().collect();
+            let keys: Vec<serde_norway::Value> = map.keys().cloned().collect();
             for k in keys {
                 if let Some(v) = map.get_mut(k) {
                     redact_yaml_value(v, allocator, counts);
@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn json_stays_parseable() {
-        let mut a = PlaceholderAllocator::new(0);
+        let mut a = PlaceholderAllocator::new();
         let input = r#"{"key":"AKIAIOSFODNN7EXAMPLE","n":1}"#;
         let out = scrub_structured(input, ContentFormat::Json, &mut a);
         assert_eq!(out.structure_status, StructureStatus::Valid);
@@ -316,7 +316,7 @@ mod tests {
 
     #[test]
     fn malformed_json_review_required() {
-        let mut a = PlaceholderAllocator::new(0);
+        let mut a = PlaceholderAllocator::new();
         let out = scrub_structured("{not json", ContentFormat::Json, &mut a);
         assert_eq!(out.structure_status, StructureStatus::Invalid);
         assert_eq!(out.safety_status, SafetyStatus::ReviewRequired);
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn env_preserves_keys() {
-        let mut a = PlaceholderAllocator::new(0);
+        let mut a = PlaceholderAllocator::new();
         let input = "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n# comment\n";
         let out = scrub_structured(input, ContentFormat::Env, &mut a);
         assert!(out.text.starts_with("AWS_ACCESS_KEY_ID="));
