@@ -1,6 +1,7 @@
 //! Multi-file workspace enumeration and correlated scrub.
 
 use crate::cancel::{CancelFlag, ProgressEvent};
+use crate::detect::find_candidates;
 use crate::export::ExportError;
 use crate::format::{format_from_path, looks_binary, ContentFormat};
 use crate::limits::WorkspaceLimits;
@@ -318,14 +319,16 @@ pub fn scrub_workspace(
             // Empty files are trivially safe; copy them through so the
             // exported bundle keeps the original tree shape.
             included_count += 1;
+            let (safety_status, reason) =
+                with_path_review(&rel_str, SafetyStatus::SafeCopyReady, Some("empty file".into()));
             artifacts.push(FileArtifact {
                 relative_path: rel,
                 outcome: FileOutcome {
                     path: rel_str.clone(),
                     inclusion: FileInclusion::Included,
-                    reason: Some("empty file".into()),
+                    reason,
                     structure_status: StructureStatus::NotApplicable,
-                    safety_status: SafetyStatus::SafeCopyReady,
+                    safety_status,
                     findings_count: 0,
                 },
                 text: Some(String::new()),
@@ -353,15 +356,18 @@ pub fn scrub_workspace(
             FileInclusion::Included
         };
 
+        let (safety_status, reason) =
+            with_path_review(&rel_str, structured.safety_status, structured.note);
+
         included_count += 1;
         artifacts.push(FileArtifact {
             relative_path: rel,
             outcome: FileOutcome {
                 path: rel_str.clone(),
                 inclusion,
-                reason: structured.note,
+                reason,
                 structure_status: structured.structure_status,
-                safety_status: structured.safety_status,
+                safety_status,
                 findings_count: file_findings.len(),
             },
             text: Some(structured.text),
@@ -418,6 +424,40 @@ fn collect_entries(root: &Path, limits: &WorkspaceLimits) -> Result<Vec<PathBuf>
     }
     paths.sort();
     Ok(paths)
+}
+
+/// File and directory *names* are never scanned as content (only bytes
+/// inside a file are). This checks the relative path string itself
+/// against the same detectors used on content, so an obviously sensitive
+/// filename (an email address, an IP, a provider token pattern) forces
+/// review instead of shipping unremarked.
+fn path_review_note(rel_str: &str) -> Option<String> {
+    if find_candidates(rel_str).is_empty() {
+        None
+    } else {
+        Some(
+            "file path itself matches a detector pattern; file names are not scrubbed, only contents \
+             (see TRUST.md known detection limits)"
+                .to_string(),
+        )
+    }
+}
+
+fn with_path_review(
+    rel_str: &str,
+    safety_status: SafetyStatus,
+    reason: Option<String>,
+) -> (SafetyStatus, Option<String>) {
+    match path_review_note(rel_str) {
+        None => (safety_status, reason),
+        Some(note) => {
+            let combined = match reason {
+                Some(r) => format!("{r}; {note}"),
+                None => note,
+            };
+            (SafetyStatus::ReviewRequired, Some(combined))
+        }
+    }
 }
 
 fn excluded_file(rel: &Path, inclusion: FileInclusion, reason: String) -> FileArtifact {
@@ -640,6 +680,46 @@ mod tests {
         )
         .unwrap();
         assert!(result.cancelled);
+    }
+
+    #[test]
+    fn sensitive_filename_forces_review_required() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("alice@example.com.log"), "nothing sensitive here\n").unwrap();
+        let cancel = CancelFlag::new();
+        let result = scrub_workspace(
+            dir.path(),
+            0,
+            RulePack::BuiltinV1,
+            &WorkspaceLimits::for_tests(),
+            &cancel,
+            None,
+        )
+        .unwrap();
+        assert_eq!(result.safety_status, SafetyStatus::ReviewRequired);
+        let f = result
+            .files
+            .iter()
+            .find(|f| f.outcome.path.contains("alice@example.com"))
+            .unwrap();
+        assert!(f.outcome.reason.as_ref().unwrap().contains("file path"));
+    }
+
+    #[test]
+    fn unremarkable_filename_stays_clean() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("notes.log"), "nothing sensitive here\n").unwrap();
+        let cancel = CancelFlag::new();
+        let result = scrub_workspace(
+            dir.path(),
+            0,
+            RulePack::BuiltinV1,
+            &WorkspaceLimits::for_tests(),
+            &cancel,
+            None,
+        )
+        .unwrap();
+        assert_eq!(result.safety_status, SafetyStatus::SafeCopyReady);
     }
 
     #[test]

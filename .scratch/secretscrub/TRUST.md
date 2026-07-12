@@ -34,6 +34,12 @@ Trust is the product. One overclaim or silent miss can end the company. This doc
   under a secret-ish key are walked normally rather than blanket-redacted.
 - Files over the per-file size limit (10 MiB) are excluded and reported, not
   scanned. Processing is whole-file, not streaming.
+- **File and directory names are exported unchanged** — only file *contents*
+  are scrubbed. A workspace scrub does check each included file's relative
+  path against the same built-in detectors as content and forces
+  `review_required` (with a `path`-related reason on that file) when a name
+  looks sensitive, but the exported tree keeps the original name either way;
+  renaming files in the export is not supported.
 
 - “Never overwrites your original input”  
 - “Optional network only for license/update paths you can disable after activation (when those features ship)”  

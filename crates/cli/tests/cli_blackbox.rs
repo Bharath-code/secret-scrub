@@ -192,6 +192,44 @@ fn folder_workspace_correlated_export() {
 }
 
 #[test]
+fn sensitive_filename_forces_review_required_exit_code() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("alice@example.com.log"), "nothing sensitive here\n").unwrap();
+    let out = dir.path().join("safe");
+
+    cargo_bin_cmd!("secretscrub")
+        .args([
+            "scrub",
+            dir.path().to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--session-seed",
+            "0",
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn unremarkable_filename_stays_clean_exit_code() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("notes.log"), "nothing sensitive here\n").unwrap();
+    let out = dir.path().join("safe");
+
+    cargo_bin_cmd!("secretscrub")
+        .args([
+            "scrub",
+            dir.path().to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--session-seed",
+            "0",
+        ])
+        .assert()
+        .code(0);
+}
+
+#[test]
 fn empty_input_failure_exit() {
     cargo_bin_cmd!("secretscrub")
         .args(["scrub", "--session-seed", "0"])
