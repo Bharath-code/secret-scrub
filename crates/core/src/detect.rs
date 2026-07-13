@@ -22,6 +22,48 @@ struct Detector {
     regex: Regex,
 }
 
+/// Secret-ish key/field names, shared between the GENERIC_SECRET regex
+/// (name=value / name: value in plain text and env files) and structural
+/// key-aware redaction (JSON/YAML object keys). Underscore is the
+/// canonical separator; [`is_secret_key_name`] normalizes away
+/// underscores, hyphens, and case so `apiKey`, `API-KEY`, and `api_key`
+/// all match the same entry.
+const SECRET_KEY_WORDS: &[&str] = &[
+    "api_key",
+    "secret_key",
+    "access_token",
+    "auth_token",
+    "private_key",
+    "password",
+    "passwd",
+    "client_secret",
+];
+
+/// True when `key` (a JSON/YAML object key) is one of the secret-ish
+/// names GENERIC_SECRET also recognizes, regardless of separator style
+/// or case (`api_key`, `api-key`, `apiKey`, `API_KEY`).
+pub fn is_secret_key_name(key: &str) -> bool {
+    let normalized: String = key
+        .chars()
+        .filter(|c| *c != '_' && *c != '-')
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    SECRET_KEY_WORDS
+        .iter()
+        .any(|w| w.replace('_', "") == normalized)
+}
+
+fn generic_secret_pattern() -> String {
+    let names = SECRET_KEY_WORDS
+        .iter()
+        .map(|w| w.replace('_', "[_-]?"))
+        .collect::<Vec<_>>()
+        .join("|");
+    format!(
+        r#"(?i)\b(?:{names})\b\s*[=:]\s*(?:"([^"]{{8,}})"|'([^']{{8,}})'|([^\s#'"]{{8,}}))"#
+    )
+}
+
 fn detectors() -> &'static [Detector] {
     static DETECTORS: OnceLock<Vec<Detector>> = OnceLock::new();
     DETECTORS.get_or_init(|| {
@@ -43,10 +85,12 @@ fn detectors() -> &'static [Detector] {
                 10,
                 r"\bsk_(?:live|test)_[A-Za-z0-9]{16,}\b",
             ),
+            // No hyphens in the body (rejects slug-like names) and digits
+            // required via post-filter in find_candidates.
             det(
                 "OPENAI_API_KEY",
                 10,
-                r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b",
+                r"\bsk-(?:proj-)?[A-Za-z0-9_]{20,}\b",
             ),
             det(
                 "JWT",
@@ -54,11 +98,7 @@ fn detectors() -> &'static [Detector] {
                 r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b",
             ),
             // Generic env/header secrets: name=value with secret-ish names (capture value only).
-            det(
-                "GENERIC_SECRET",
-                40,
-                r#"(?i)\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key|password|passwd|client[_-]?secret)\b\s*[=:]\s*([^\s#'"]{8,})"#,
-            ),
+            det("GENERIC_SECRET", 40, &generic_secret_pattern()),
             det(
                 "EMAIL",
                 50,
@@ -87,7 +127,11 @@ pub fn find_candidates(text: &str) -> Vec<Candidate> {
 
     for d in detectors() {
         for caps in d.regex.captures_iter(text) {
-            let (start, end, value) = if let Some(m) = caps.get(1) {
+            // Multiple alternative capture groups (e.g. quoted vs bare value
+            // branches): first non-empty group wins.
+            let (start, end, value) = if let Some(m) =
+                (1..caps.len()).find_map(|i| caps.get(i))
+            {
                 (m.start(), m.end(), m.as_str().to_string())
             } else if let Some(m) = caps.get(0) {
                 (m.start(), m.end(), m.as_str().to_string())
@@ -95,9 +139,10 @@ pub fn find_candidates(text: &str) -> Vec<Candidate> {
                 continue;
             };
 
-            // Stripe keys also match a broad sk- OpenAI pattern; prefer Stripe.
+            // Entropy floor: real OpenAI keys always carry digits; slug-like
+            // identifiers (sk-formatting-helper) usually don't.
             if d.detector_type == "OPENAI_API_KEY"
-                && (value.starts_with("sk_live_") || value.starts_with("sk_test_"))
+                && value.chars().filter(char::is_ascii_digit).count() < 2
             {
                 continue;
             }
@@ -150,10 +195,87 @@ mod tests {
     }
 
     #[test]
+    fn slug_like_sk_name_not_openai() {
+        assert!(find_candidates("tool=sk-formatting-helper-utils-v2 done").is_empty());
+    }
+
+    #[test]
+    fn openai_key_detected() {
+        let c = find_candidates("openai=sk-proj-abcdefghijklmnopqrstuvwxyz012345");
+        assert!(c.iter().any(|x| x.detector_type == "OPENAI_API_KEY"));
+    }
+
+    #[test]
     fn stripe_not_openai() {
         let text = "sk_test_51HaExampleStripeKey99";
         let c = find_candidates(text);
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].detector_type, "STRIPE_SECRET");
+    }
+
+    #[test]
+    fn generic_secret_quoted_double() {
+        let text = r#"password="supersecret1""#;
+        let c = find_candidates(text);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].detector_type, "GENERIC_SECRET");
+        assert_eq!(c[0].value, "supersecret1");
+        // Quotes fall outside the match span, so they survive replacement.
+        assert_eq!(&text[c[0].start..c[0].end], "supersecret1");
+    }
+
+    #[test]
+    fn generic_secret_quoted_single() {
+        let text = "api_key: 'abcdefgh1234'";
+        let c = find_candidates(text);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].value, "abcdefgh1234");
+    }
+
+    #[test]
+    fn generic_secret_bare_still_works() {
+        let text = "password=hunter2secret99 rest";
+        let c = find_candidates(text);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].value, "hunter2secret99");
+    }
+
+    #[test]
+    fn generic_secret_short_quoted_not_matched() {
+        assert!(find_candidates(r#"password="short""#).is_empty());
+    }
+
+    #[test]
+    fn generic_secret_quoted_alternation_yields_single_match() {
+        // Alternation branches are mutually exclusive at a given start
+        // position, so a quoted value is never counted twice.
+        let text = r#"password="supersecret1" trailing text"#;
+        assert_eq!(find_candidates(text).len(), 1);
+    }
+
+    #[test]
+    fn secret_key_name_matches_common_spellings() {
+        for key in [
+            "password",
+            "passwd",
+            "api_key",
+            "api-key",
+            "apiKey",
+            "API_KEY",
+            "secret_key",
+            "access_token",
+            "auth_token",
+            "private_key",
+            "client_secret",
+        ] {
+            assert!(is_secret_key_name(key), "{key} should be secret-ish");
+        }
+    }
+
+    #[test]
+    fn secret_key_name_rejects_unrelated_names() {
+        for key in ["username", "id", "password_hint", "note"] {
+            assert!(!is_secret_key_name(key), "{key} should not be secret-ish");
+        }
     }
 }

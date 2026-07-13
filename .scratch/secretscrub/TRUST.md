@@ -20,6 +20,27 @@ Trust is the product. One overclaim or silent miss can end the company. This doc
 - “Detects **common** provider tokens, JWTs, emails, IPs, and configured custom rules”  
 - “Replaces repeated values with **consistent placeholders within one workspace**”  
 - “Preserves structure for **supported** formats; marks unsupported files for review”  
+
+## Known detection limits (state these plainly)
+
+- JSON and YAML **keys are not scanned** — only values are. A secret used as a
+  key (or a key name that is itself sensitive) passes through unchanged.
+- When a key name looks secret-ish (`password`, `passwd`, `api_key`,
+  `secret_key`, `access_token`, `auth_token`, `private_key`,
+  `client_secret` — any underscore/hyphen/case spelling), the entire
+  **string** value under that key is redacted, even if no detector
+  pattern matches the bare value. Non-string values (numbers, booleans)
+  under a secret-ish key are left unchanged, and nested objects/arrays
+  under a secret-ish key are walked normally rather than blanket-redacted.
+- Files over the per-file size limit (10 MiB) are excluded and reported, not
+  scanned. Processing is whole-file, not streaming.
+- **File and directory names are exported unchanged** — only file *contents*
+  are scrubbed. A workspace scrub does check each included file's relative
+  path against the same built-in detectors as content and forces
+  `review_required` (with a `path`-related reason on that file) when a name
+  looks sensitive, but the exported tree keeps the original name either way;
+  renaming files in the export is not supported.
+
 - “Never overwrites your original input”  
 - “Optional network only for license/update paths you can disable after activation (when those features ship)”  
 
@@ -34,7 +55,7 @@ Trust is the product. One overclaim or silent miss can end the company. This doc
 | No silent “all clear” | Unsupported, partial, or low-confidence → Review required |
 | Conservative rule changes | Widening a detector requires fixtures + changelog |
 | Scope is versioned | Export summary includes rule-pack / product version |
-| Cross-export privacy | Placeholders are **not** stable across separate scrubs |
+| Correlation scope | Placeholder maps are never persisted; correlation is guaranteed only within one workspace scrub. Indices are first-seen sequential, so re-scrubbing identical input reproduces the same placeholders — do not present placeholder numbering as an anonymity layer |
 
 ### Severity of misses
 

@@ -1,7 +1,8 @@
 //! Multi-file workspace enumeration and correlated scrub.
 
 use crate::cancel::{CancelFlag, ProgressEvent};
-use crate::export::{atomic_write, ExportError};
+use crate::detect::find_candidates;
+use crate::export::ExportError;
 use crate::format::{format_from_path, looks_binary, ContentFormat};
 use crate::limits::WorkspaceLimits;
 use crate::placeholder::PlaceholderAllocator;
@@ -80,7 +81,6 @@ impl WorkspaceResult {
 /// Scrub a directory as one correlated workspace.
 pub fn scrub_workspace(
     root: &Path,
-    session_seed: u64,
     rule_pack: RulePack,
     limits: &WorkspaceLimits,
     cancel: &CancelFlag,
@@ -97,7 +97,7 @@ pub fn scrub_workspace(
         },
     );
 
-    let mut allocator = PlaceholderAllocator::new(session_seed);
+    let mut allocator = PlaceholderAllocator::new();
     let mut total_counts: HashMap<(String, String), usize> = HashMap::new();
     let mut artifacts: Vec<FileArtifact> = Vec::new();
     let mut bytes_read: u64 = 0;
@@ -117,10 +117,29 @@ pub fn scrub_workspace(
             ));
         }
 
-        let rel = entry
-            .strip_prefix(root)
-            .unwrap_or(entry.as_path())
-            .to_path_buf();
+        // Fail closed: a path that can't be relativized against root must
+        // never be joined onto the staging dir at export time (that would
+        // write outside it). Exclude it explicitly instead of falling back
+        // to the absolute path. Unreachable via WalkDir today, but this is
+        // the last line of defense if that ever changes.
+        let rel = match entry.strip_prefix(root) {
+            Ok(r) => r.to_path_buf(),
+            Err(_) => {
+                artifacts.push(FileArtifact {
+                    relative_path: entry.clone(),
+                    outcome: FileOutcome {
+                        path: entry.to_string_lossy().replace('\\', "/"),
+                        inclusion: FileInclusion::Excluded,
+                        reason: Some("path outside workspace root".into()),
+                        structure_status: StructureStatus::NotApplicable,
+                        safety_status: SafetyStatus::ReviewRequired,
+                        findings_count: 0,
+                    },
+                    text: None,
+                });
+                continue;
+            }
+        };
         let rel_str = rel.to_string_lossy().replace('\\', "/");
 
         emit(
@@ -315,11 +334,30 @@ pub fn scrub_workspace(
         };
 
         if content.is_empty() {
-            artifacts.push(excluded_file(
-                &rel,
-                FileInclusion::Excluded,
-                "empty file".into(),
-            ));
+            // Empty files are trivially safe; copy them through so the
+            // exported bundle keeps the original tree shape.
+            included_count += 1;
+            let (safety_status, reason) =
+                with_path_review(&rel_str, SafetyStatus::SafeCopyReady, Some("empty file".into()));
+            artifacts.push(FileArtifact {
+                relative_path: rel,
+                outcome: FileOutcome {
+                    path: rel_str.clone(),
+                    inclusion: FileInclusion::Included,
+                    reason,
+                    structure_status: StructureStatus::NotApplicable,
+                    safety_status,
+                    findings_count: 0,
+                },
+                text: Some(String::new()),
+            });
+            emit(
+                &mut progress,
+                ProgressEvent::FileFinished {
+                    path: rel_str,
+                    included: true,
+                },
+            );
             continue;
         }
 
@@ -336,15 +374,18 @@ pub fn scrub_workspace(
             FileInclusion::Included
         };
 
+        let (safety_status, reason) =
+            with_path_review(&rel_str, structured.safety_status, structured.note);
+
         included_count += 1;
         artifacts.push(FileArtifact {
             relative_path: rel,
             outcome: FileOutcome {
                 path: rel_str.clone(),
                 inclusion,
-                reason: structured.note,
+                reason,
                 structure_status: structured.structure_status,
-                safety_status: structured.safety_status,
+                safety_status,
                 findings_count: file_findings.len(),
             },
             text: Some(structured.text),
@@ -401,6 +442,40 @@ fn collect_entries(root: &Path, limits: &WorkspaceLimits) -> Result<Vec<PathBuf>
     }
     paths.sort();
     Ok(paths)
+}
+
+/// File and directory *names* are never scanned as content (only bytes
+/// inside a file are). This checks the relative path string itself
+/// against the same detectors used on content, so an obviously sensitive
+/// filename (an email address, an IP, a provider token pattern) forces
+/// review instead of shipping unremarked.
+fn path_review_note(rel_str: &str) -> Option<String> {
+    if find_candidates(rel_str).is_empty() {
+        None
+    } else {
+        Some(
+            "file path itself matches a detector pattern; file names are not scrubbed, only contents \
+             (see TRUST.md known detection limits)"
+                .to_string(),
+        )
+    }
+}
+
+fn with_path_review(
+    rel_str: &str,
+    safety_status: SafetyStatus,
+    reason: Option<String>,
+) -> (SafetyStatus, Option<String>) {
+    match path_review_note(rel_str) {
+        None => (safety_status, reason),
+        Some(note) => {
+            let combined = match reason {
+                Some(r) => format!("{r}; {note}"),
+                None => note,
+            };
+            (SafetyStatus::ReviewRequired, Some(combined))
+        }
+    }
 }
 
 fn excluded_file(rel: &Path, inclusion: FileInclusion, reason: String) -> FileArtifact {
@@ -476,43 +551,104 @@ fn emit(progress: &mut Option<&mut dyn FnMut(ProgressEvent)>, event: ProgressEve
 }
 
 /// Write included safe files into `dest_root` as a parallel tree.
-/// On cancel mid-write, removes the incomplete destination directory if we created it.
+/// Builds in a temp sibling dir and swaps in only on success; cancel or
+/// failure never touches a pre-existing destination.
 pub fn export_workspace_tree(
     result: &WorkspaceResult,
     dest_root: &Path,
     force: bool,
     cancel: &CancelFlag,
 ) -> Result<(), WorkspaceError> {
-    if dest_root.exists() {
-        if !force {
-            return Err(WorkspaceError::Export(ExportError::DestinationExists(
-                dest_root.to_path_buf(),
-            )));
-        }
-        if dest_root.is_dir() {
-            fs::remove_dir_all(dest_root)?;
-        } else {
-            fs::remove_file(dest_root)?;
-        }
+    if dest_root.exists() && !force {
+        return Err(WorkspaceError::Export(ExportError::DestinationExists(
+            dest_root.to_path_buf(),
+        )));
     }
-    fs::create_dir_all(dest_root)?;
+
+    // Build the full tree in a temp sibling dir first so a pre-existing
+    // destination is only replaced after the export completes; cancel or
+    // failure just drops the temp dir.
+    let parent = dest_root
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::create_dir_all(parent)?;
+    let staging = tempfile::Builder::new()
+        .prefix(".secretscrub-export-")
+        .tempdir_in(parent)
+        .map_err(WorkspaceError::Io)?;
 
     for file in &result.files {
         if cancel.is_cancelled() {
-            let _ = fs::remove_dir_all(dest_root);
             return Err(WorkspaceError::Cancelled);
         }
         // Export any produced text (including review-required structured fallbacks).
         let Some(text) = &file.text else {
             continue;
         };
-        let dest = dest_root.join(&file.relative_path);
+        let dest = staging.path().join(&file.relative_path);
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
-        atomic_write(&dest, text, true)?;
+        fs::write(&dest, text)?;
     }
-    Ok(())
+
+    // Re-check after the loop: with zero files the loop never observes the
+    // flag, and a cancelled export must never replace the destination.
+    if cancel.is_cancelled() {
+        return Err(WorkspaceError::Cancelled);
+    }
+
+    // staging.keep() disables the TempDir's auto-cleanup-on-drop; from here
+    // on every path (success or failure) must explicitly remove it.
+    let staging_path = staging.keep();
+
+    if !dest_root.exists() {
+        if let Err(e) = fs::rename(&staging_path, dest_root) {
+            let _ = fs::remove_dir_all(&staging_path);
+            return Err(WorkspaceError::Io(e));
+        }
+        return Ok(());
+    }
+
+    // Force-swap over an existing destination: rename it aside first so
+    // there is never a window where the destination is gone but the
+    // replacement isn't in place yet. If the final swap fails, restore
+    // the aside copy so the user never loses their previous export.
+    let aside = aside_path(dest_root);
+    if let Err(e) = fs::rename(dest_root, &aside) {
+        let _ = fs::remove_dir_all(&staging_path);
+        return Err(WorkspaceError::Io(e));
+    }
+    match fs::rename(&staging_path, dest_root) {
+        Ok(()) => {
+            if aside.is_dir() {
+                let _ = fs::remove_dir_all(&aside);
+            } else {
+                let _ = fs::remove_file(&aside);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            let _ = fs::rename(&aside, dest_root);
+            let _ = fs::remove_dir_all(&staging_path);
+            Err(WorkspaceError::Io(e))
+        }
+    }
+}
+
+/// Sibling path to rename the old destination to during a force-swap.
+/// Includes the current PID so concurrent exports in the same parent
+/// directory don't collide.
+fn aside_path(dest_root: &Path) -> PathBuf {
+    let file_name = dest_root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    dest_root.with_file_name(format!(
+        ".secretscrub-export-aside-{}-{file_name}",
+        std::process::id()
+    ))
 }
 
 #[cfg(test)]
@@ -528,7 +664,6 @@ mod tests {
         let cancel = CancelFlag::new();
         let result = scrub_workspace(
             dir.path(),
-            0,
             RulePack::BuiltinV1,
             &WorkspaceLimits::for_tests(),
             &cancel,
@@ -562,7 +697,6 @@ mod tests {
         let cancel = CancelFlag::new();
         let result = scrub_workspace(
             dir.path(),
-            0,
             RulePack::BuiltinV1,
             &WorkspaceLimits::for_tests(),
             &cancel,
@@ -595,7 +729,6 @@ mod tests {
         };
         let result = scrub_workspace(
             dir.path(),
-            0,
             RulePack::BuiltinV1,
             &WorkspaceLimits::for_tests(),
             &cancel,
@@ -606,6 +739,44 @@ mod tests {
     }
 
     #[test]
+    fn sensitive_filename_forces_review_required() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("alice@example.com.log"), "nothing sensitive here\n").unwrap();
+        let cancel = CancelFlag::new();
+        let result = scrub_workspace(
+            dir.path(),
+            RulePack::BuiltinV1,
+            &WorkspaceLimits::for_tests(),
+            &cancel,
+            None,
+        )
+        .unwrap();
+        assert_eq!(result.safety_status, SafetyStatus::ReviewRequired);
+        let f = result
+            .files
+            .iter()
+            .find(|f| f.outcome.path.contains("alice@example.com"))
+            .unwrap();
+        assert!(f.outcome.reason.as_ref().unwrap().contains("file path"));
+    }
+
+    #[test]
+    fn unremarkable_filename_stays_clean() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("notes.log"), "nothing sensitive here\n").unwrap();
+        let cancel = CancelFlag::new();
+        let result = scrub_workspace(
+            dir.path(),
+            RulePack::BuiltinV1,
+            &WorkspaceLimits::for_tests(),
+            &cancel,
+            None,
+        )
+        .unwrap();
+        assert_eq!(result.safety_status, SafetyStatus::SafeCopyReady);
+    }
+
+    #[test]
     fn max_file_size_excludes() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("big.log"), vec![b'a'; 1000]).unwrap();
@@ -613,7 +784,7 @@ mod tests {
         limits.max_file_size = 100;
         let cancel = CancelFlag::new();
         let result =
-            scrub_workspace(dir.path(), 0, RulePack::BuiltinV1, &limits, &cancel, None).unwrap();
+            scrub_workspace(dir.path(), RulePack::BuiltinV1, &limits, &cancel, None).unwrap();
         assert_eq!(result.files[0].outcome.inclusion, FileInclusion::Excluded);
         assert_eq!(result.safety_status, SafetyStatus::ReviewRequired);
     }

@@ -178,7 +178,7 @@ Color must never be the sole status signal: pair it with a text label and a dist
 
 - Ship a local-first desktop product backed by a companion CLI. The first release must not transmit input artifacts, raw findings, or derived content to any hosted service.
 - Treat transformation, not detection alone, as the core product outcome: users receive an exportable safe copy, a findings summary, and a review surface.
-- Build a deep **redaction engine** with a stable interface that accepts artifact content, rule configuration, and an output policy; it returns a transformed artifact, typed findings, structural-validation results, and an export-safety status. It must be streaming-capable so large inputs are not fully held in memory.
+- Build a deep **redaction engine** with a stable interface that accepts artifact content, rule configuration, and an output policy; it returns a transformed artifact, typed findings, structural-validation results, and an export-safety status. Processing is whole-file with a hard per-file limit (10 MiB; larger files are excluded and reported); streaming is a possible future optimization, not a current capability.
 - Build a deep **rule-pack module** that classifies built-in and custom detectors, assigns semantic placeholder types, handles value correlation within one workspace, and validates signed updates. The engine consumes this module through a narrow rule-evaluation interface.
 - Build a deep **structured-artifact transformer** that preserves validity for supported structured formats and explicitly reports unsupported or partially supported formats. Unsupported formats must never be silently marked safe.
 - Build an **artifact workspace module** that owns input selection, temporary handling, preview state, cancellation, and export. It must keep originals immutable and clear temporary data when the user clears or closes a workspace.
@@ -196,7 +196,7 @@ Color must never be the sole status signal: pair it with a text label and a dist
 | Desktop shell | Tauri v2 | Small native desktop distribution with a Rust command boundary and system WebView. |
 | Desktop UI | React and TypeScript | Productive implementation of the command-first, accessible review interface. The UI remains a thin client over the Rust core. |
 | CLI | Rust with Clap | A standalone binary with shell-friendly help, completion, structured output, and stable exit states. |
-| Async and I/O | Tokio with bounded worker queues | Responsive UI and streaming file work without unbounded memory or task creation. |
+| Async and I/O | Tokio with bounded worker queues | Responsive UI and file work without unbounded memory or task creation. |
 | CPU-parallel work | Bounded Rayon pool where profiling justifies it | Parallel folder scanning while preserving deterministic output and responsive cancellation. |
 | Detection | Rust regular expressions plus Aho-Corasick-style literal matching | Linear-time, versioned built-in detectors; avoid regex engines vulnerable to catastrophic backtracking. |
 | Structured formats | Serde-based JSON/YAML/TOML parsing and serialization | Preserve valid supported structures after redaction. |
@@ -212,7 +212,7 @@ The initial release has **no application backend**. Billing, license issuance, a
 ### Core boundaries
 
 - **Core domain library:** owns content classification, candidate detection, placeholder allocation, rule evaluation, structured transformation, export-safety decisions, and typed findings. Both desktop and CLI consume this stable API; neither reimplements redaction behavior.
-- **Input and workspace adapter:** enumerates selected files, enforces size and recursion limits, creates private temporary workspace state, streams content into the core library, and coordinates cancellation.
+- **Input and workspace adapter:** enumerates selected files, enforces size and recursion limits, creates private temporary workspace state, reads whole files (within size limits) into the core library, and coordinates cancellation.
 - **Rule-pack service:** loads built-in rules, validates custom rules, verifies signed updates, and exposes only compiled detector policy to the core domain library.
 - **Export service:** writes a new safe bundle to a user-chosen destination, validates supported transformed artifacts, creates an optional safety summary, and uses atomic completion semantics.
 - **Desktop adapter:** exposes the smallest possible set of typed Rust commands needed by the interface and renders UI state. It does not receive broad filesystem or shell privileges.
@@ -222,7 +222,7 @@ The initial release has **no application backend**. Billing, license issuance, a
 
 1. The user explicitly selects an artifact, folder, or pasted text.
 2. The input adapter creates a private in-memory or OS-private temporary workspace and records only the minimum metadata required for review.
-3. The core library classifies and scans content in streams, retaining original values only for the lifetime of the active workspace and only as needed for side-by-side review and consistent placeholder allocation.
+3. The core library classifies and scans each file's content in memory (≤10 MiB per file), retaining original values only for the lifetime of the active workspace and only as needed for side-by-side review and consistent placeholder allocation.
 4. The export service writes only transformed content and a non-sensitive summary to the selected destination.
 5. Clearing the workspace removes temporary originals, in-memory value mappings, and preview state. Persistent local state retains no raw content, raw findings, or secret values.
 
@@ -266,17 +266,17 @@ The initial release has **no application backend**. Billing, license issuance, a
 ## Testing Decisions
 
 - Tests must assert externally observable behavior: output content, structural validity, findings, safety status, cancellation behavior, and CLI exit behavior. They must not assert internal implementation or traversal order unless order is part of the public contract.
-- The redaction engine will have extensive fixture-based tests covering token detection, consistent placeholders, overlapping candidates, false-positive exclusions, large streamed inputs, and unchanged non-sensitive content.
+- The redaction engine will have extensive fixture-based tests covering token detection, consistent placeholders, overlapping candidates, false-positive exclusions, large inputs up to the per-file size limit, and unchanged non-sensitive content.
 - The rule-pack module will have isolated tests for rule precedence, custom-rule validation, semantic placeholder allocation, signature validation, and compatibility between a rule pack and the engine.
 - The structured-artifact transformer will have contract tests confirming that supported JSON and YAML remain parseable and that unsupported structures surface an explicit non-safe status.
 - The artifact workspace will have integration tests covering import, scan, review, cancel, clear, and atomic export behavior without modifying the original input.
 - The CLI will have black-box tests for path input, standard input, JSON summaries, output destinations, and exit statuses.
 - The desktop UI will have accessibility tests for keyboard completion of the primary workflow, visible focus, semantic labels, loading/error feedback, and reduced-motion behavior.
-- Use property tests and fuzzing for detector overlap, placeholder allocation, malformed structured input, Unicode boundaries, deeply nested documents, and cancellation at arbitrary streaming points.
+- Use property tests and fuzzing for detector overlap, placeholder allocation, malformed structured input, Unicode boundaries, deeply nested documents, and cancellation between files during workspace scans.
 - Use golden fixtures for representative incident artifacts to confirm that safe copies preserve the required debugging signal while replacing sensitive values consistently.
 - Run desktop end-to-end tests against the packaged command boundary, not mocks of the redaction engine, to verify input selection, review state, export, cancellation, and permission failures.
 - Add security regression tests for path traversal, symbolic-link handling, destination conflicts, CSP configuration, denied command access, signature rejection, and diagnostic-content exclusion.
-- Add performance regression tests for representative single-file and folder-bundle inputs. The desktop UI must remain responsive while the scanner streams large inputs.
+- Add performance regression tests for representative single-file and folder-bundle inputs. The desktop UI must remain responsive while the scanner processes large inputs.
 - The repository has no existing test prior art. Establish fixture-driven behavior tests and black-box CLI tests as the baseline for future modules.
 
 ## Out of Scope
