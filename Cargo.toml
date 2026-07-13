@@ -19,3 +19,5 @@ thiserror = "2.0"
 clap = { version = "4.5", features = ["derive"] }
 tempfile = "3.14"
 walkdir = "2.5"
+sha2 = "0.10"
+hex = "0.4"
