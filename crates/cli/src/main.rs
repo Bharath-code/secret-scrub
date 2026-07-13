@@ -10,10 +10,11 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 use secretscrub_core::{
-    atomic_write, ensure_not_source, export_workspace_tree, looks_binary, scrub_with_path,
-    scrub_workspace, write_safety_summary, CancelFlag, ContentFormat, ExitCodeKind, ExportError,
-    FileInclusion, FileReport, ProgressEvent, RulePack, SafetyStatus, SafetySummary, ScrubConfig,
-    ScrubError, ScrubResult, StructureStatus, WorkspaceError, WorkspaceLimits, WorkspaceResult,
+    atomic_write, ensure_not_source, export_workspace_tree, load_summary, looks_binary,
+    scrub_with_path, scrub_workspace, seal_single_file, seal_workspace, verify_safe_copy,
+    write_safety_summary, CancelFlag, ContentFormat, ExitCodeKind, ExportError, FileInclusion,
+    FileReport, ProgressEvent, RulePack, SafetyStatus, SafetySummary, ScrubConfig, ScrubError,
+    ScrubResult, StructureStatus, VerifyError, WorkspaceError, WorkspaceLimits, WorkspaceResult,
     PRODUCT_VERSION, RULE_PACK_VERSION,
 };
 use std::fs;
@@ -87,6 +88,20 @@ enum Commands {
         #[arg(long = "progress")]
         progress: bool,
     },
+
+    /// Verify a safe copy against a safety summary receipt (hash integrity only)
+    Verify {
+        /// Path to the exported safe file or workspace directory.
+        path: PathBuf,
+
+        /// Path to the safety summary JSON written at scrub time.
+        #[arg(long = "summary")]
+        summary: PathBuf,
+
+        /// Report format: text (default) or json.
+        #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+    },
 }
 
 fn main() -> ExitCode {
@@ -113,6 +128,11 @@ struct ScrubRun {
 fn run() -> Result<ExitCodeKind, String> {
     let cli = Cli::parse();
     match cli.command {
+        Commands::Verify {
+            path,
+            summary,
+            format,
+        } => verify_command(&path, &summary, format),
         Commands::Scrub {
             path,
             output,
@@ -260,12 +280,13 @@ fn finish_single(
 ) -> Result<ExitCodeKind, String> {
     let fully_unsupported = result.structure_status == StructureStatus::Unsupported;
 
-    let summary = SafetySummary::from_scrub(
+    let mut summary = SafetySummary::from_scrub(
         &result.findings,
         result.safety_status,
         result.structure_status,
         &result.rule_pack_version,
     );
+    seal_single_file(&mut summary, &result.text);
 
     match run.format {
         OutputFormat::Json => {
@@ -358,7 +379,8 @@ fn scrub_dir(root: &Path, run: &ScrubRun) -> Result<ExitCodeKind, String> {
         return Err("scrub cancelled".into());
     }
 
-    let summary = workspace_summary(&result);
+    let mut summary = workspace_summary(&result);
+    seal_workspace(&mut summary, &result);
 
     if let Some(ref dest) = run.output {
         ensure_not_source(Some(root), dest).map_err(export_err)?;
@@ -420,6 +442,7 @@ fn workspace_summary(result: &WorkspaceResult) -> SafetySummary {
             structure_status: f.outcome.structure_status,
             safety_status: f.outcome.safety_status,
             findings_count: f.outcome.findings_count,
+            sha256: None,
         })
         .collect();
     SafetySummary::build(
@@ -429,6 +452,69 @@ fn workspace_summary(result: &WorkspaceResult) -> SafetySummary {
         &result.rule_pack_version,
         Some(files),
     )
+}
+
+fn verify_command(
+    path: &Path,
+    summary_path: &Path,
+    format: OutputFormat,
+) -> Result<ExitCodeKind, String> {
+    let summary = load_summary(summary_path).map_err(verify_err)?;
+    match verify_safe_copy(path, &summary) {
+        Ok(report) => {
+            match format {
+                OutputFormat::Json => {
+                    let v = serde_json::json!({
+                        "ok": true,
+                        "hash_scheme": report.hash_scheme,
+                        "content_sha256": report.content_sha256,
+                        "product_version": report.product_version,
+                        "rule_pack_version": report.rule_pack_version,
+                    });
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?
+                    );
+                }
+                OutputFormat::Text => {
+                    eprintln!(
+                        "verify ok: content matches summary (scheme={}, rule_pack={}, product={})",
+                        report.hash_scheme, report.rule_pack_version, report.product_version
+                    );
+                }
+            }
+            Ok(ExitCodeKind::Clean)
+        }
+        Err(e) => {
+            match format {
+                OutputFormat::Json => {
+                    let v = serde_json::json!({
+                        "ok": false,
+                        "error": e.to_string(),
+                        "hash_scheme": summary.hash_scheme,
+                        "product_version": summary.product_version,
+                        "rule_pack_version": summary.rule_pack_version,
+                    });
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&v).map_err(|err| err.to_string())?
+                    );
+                }
+                OutputFormat::Text => {
+                    eprintln!("verify failed: {e}");
+                }
+            }
+            // Mismatch / verify failure is exit 1 per issue contract.
+            match e {
+                VerifyError::Io(_) | VerifyError::Json(_) => Err(e.to_string()),
+                _ => Ok(ExitCodeKind::Failure),
+            }
+        }
+    }
+}
+
+fn verify_err(e: VerifyError) -> String {
+    e.to_string()
 }
 
 fn export_err(e: ExportError) -> String {

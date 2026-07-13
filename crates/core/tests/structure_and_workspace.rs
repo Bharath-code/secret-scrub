@@ -143,20 +143,21 @@ fn cancelled_force_export_preserves_existing_destination() {
     )
     .unwrap();
 
-    let out = tempfile::tempdir().unwrap();
-    fs::write(out.path().join("precious.txt"), "keep me").unwrap();
+    // Dedicated parent so leftover checks ignore concurrent tests' staging dirs.
+    let parent = tempfile::tempdir().unwrap();
+    let dest = parent.path().join("existing");
+    fs::create_dir_all(&dest).unwrap();
+    fs::write(dest.join("precious.txt"), "keep me").unwrap();
 
     cancel.cancel();
-    let err = export_workspace_tree(&result, out.path(), true, &cancel);
+    let err = export_workspace_tree(&result, &dest, true, &cancel);
     assert!(err.is_err(), "cancelled export must fail");
     assert_eq!(
-        fs::read_to_string(out.path().join("precious.txt")).unwrap(),
+        fs::read_to_string(dest.join("precious.txt")).unwrap(),
         "keep me",
         "cancelled --force export must not touch the existing destination"
     );
-    // No staging leftovers next to the destination.
-    let parent = out.path().parent().unwrap();
-    assert!(!fs::read_dir(parent).unwrap().any(|e| {
+    assert!(!fs::read_dir(parent.path()).unwrap().any(|e| {
         e.unwrap()
             .file_name()
             .to_string_lossy()
@@ -222,15 +223,18 @@ fn force_export_leaves_no_staging_or_aside_leftovers() {
     )
     .unwrap();
 
-    let out = tempfile::tempdir().unwrap();
-    fs::write(out.path().join("old.txt"), "previous export").unwrap();
+    // Dedicated parent so the leftover check is not polluted by concurrent
+    // tests that also stage under the shared system temp directory.
+    let parent = tempfile::tempdir().unwrap();
+    let dest = parent.path().join("safe-out");
+    fs::create_dir_all(&dest).unwrap();
+    fs::write(dest.join("old.txt"), "previous export").unwrap();
 
-    export_workspace_tree(&result, out.path(), true, &cancel).unwrap();
+    export_workspace_tree(&result, &dest, true, &cancel).unwrap();
 
-    assert!(out.path().join("a.log").exists());
-    assert!(!out.path().join("old.txt").exists());
-    let parent = out.path().parent().unwrap();
-    assert!(!fs::read_dir(parent).unwrap().any(|e| {
+    assert!(dest.join("a.log").exists());
+    assert!(!dest.join("old.txt").exists());
+    assert!(!fs::read_dir(parent.path()).unwrap().any(|e| {
         let name = e.unwrap().file_name().to_string_lossy().into_owned();
         name.starts_with(".secretscrub-export-")
     }));

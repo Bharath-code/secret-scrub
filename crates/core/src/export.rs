@@ -170,6 +170,7 @@ mod tests {
         assert!(!json.contains("AKIA"));
         assert!(json.contains("AWS_ACCESS_KEY"));
         assert!(json.contains("rule_pack_version"));
+        assert!(!json.contains("content_sha256") || summary.content_sha256.is_none());
     }
 
     #[test]
