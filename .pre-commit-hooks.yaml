@@ -1,0 +1,18 @@
+# SecretScrub pre-commit hook definitions.
+# In another repo:
+#   repos:
+#     - repo: https://github.com/Bharath-code/secret-scrub
+#       rev: <tag-or-sha>
+#       hooks:
+#         - id: secretscrub
+#
+# Requires a `secretscrub` binary on PATH (cargo install --path crates/cli).
+
+- id: secretscrub
+  name: secretscrub
+  description: Detect common secrets/identifiers before commit (local only; no upload).
+  entry: secretscrub scrub --check
+  language: system
+  types: [text]
+  pass_filenames: true
+  require_serial: false

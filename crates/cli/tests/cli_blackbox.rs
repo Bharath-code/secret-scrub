@@ -245,6 +245,108 @@ fn empty_input_failure_exit() {
 }
 
 #[test]
+fn check_clean_input_exits_zero_silently() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("clean.log");
+    fs::write(&src, "hello world\nno secrets here\n").unwrap();
+
+    let assert = cargo_bin_cmd!("secretscrub")
+        .args(["scrub", "--check", src.to_str().unwrap()])
+        .assert()
+        .code(0);
+    assert!(assert.get_output().stdout.is_empty());
+    assert!(assert.get_output().stderr.is_empty());
+    // Source untouched; no extra files created in the dir.
+    assert_eq!(fs::read_to_string(&src).unwrap(), "hello world\nno secrets here\n");
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn check_secret_bearing_exits_two_with_typed_report() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("leaky.log");
+    fs::write(&src, format!("key={AWS}\nagain={AWS}\n")).unwrap();
+
+    let assert = cargo_bin_cmd!("secretscrub")
+        .args(["scrub", "--check", src.to_str().unwrap()])
+        .assert()
+        .code(2);
+
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("AWS_ACCESS_KEY"));
+    assert!(stderr.contains("distinct"));
+    assert!(!stderr.contains(AWS), "check report must never leak secret values");
+    assert!(assert.get_output().stdout.is_empty());
+    // No safe copy or other files created.
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    assert!(fs::read_to_string(&src).unwrap().contains(AWS));
+}
+
+#[test]
+fn check_never_creates_output_file() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("in.log");
+    fs::write(&src, format!("{AWS}\n")).unwrap();
+
+    cargo_bin_cmd!("secretscrub")
+        .args(["scrub", "--check", src.to_str().unwrap()])
+        .assert()
+        .code(2);
+
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn check_conflicts_with_output() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("in.log");
+    let dest = dir.path().join("out.log");
+    fs::write(&src, "x\n").unwrap();
+
+    cargo_bin_cmd!("secretscrub")
+        .args([
+            "scrub",
+            "--check",
+            src.to_str().unwrap(),
+            "-o",
+            dest.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn check_multi_path_aggregates_exit_code() {
+    let dir = tempdir().unwrap();
+    let clean = dir.path().join("clean.log");
+    let dirty = dir.path().join("dirty.log");
+    fs::write(&clean, "ok\n").unwrap();
+    fs::write(&dirty, format!("{AWS}\n")).unwrap();
+
+    cargo_bin_cmd!("secretscrub")
+        .args([
+            "scrub",
+            "--check",
+            clean.to_str().unwrap(),
+            dirty.to_str().unwrap(),
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn check_stdin_secret() {
+    cargo_bin_cmd!("secretscrub")
+        .args(["scrub", "--check"])
+        .write_stdin(format!("{AWS}\n"))
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("AWS_ACCESS_KEY"))
+        .stderr(predicate::str::contains(AWS).not());
+}
+
+#[test]
 fn oversize_file_fails() {
     let dir = tempdir().unwrap();
     let src = dir.path().join("big.log");
