@@ -72,6 +72,10 @@ cargo run -q -p secretscrub-cli -- scrub ./incident-bundle -o ./incident-bundle.
 # Machine-readable findings only (no secret values)
 cargo run -q -p secretscrub-cli -- scrub ./app.log --format json
 
+# Detection-only for CI / pre-commit (no files written; exit 2 if findings)
+cargo run -q -p secretscrub-cli -- scrub --check ./app.log
+echo 'AKIAIOSFODNN7EXAMPLE' | cargo run -q -p secretscrub-cli -- scrub --check
+
 # Tests
 cargo test
 ```
@@ -84,8 +88,34 @@ Binary name: `secretscrub` (package `secretscrub-cli`).
 | --- | --- |
 | **0** | Clean (`safe_copy_ready`) |
 | **1** | Failure (IO, empty input, limits, export error) |
-| **2** | Completed with **review required** |
+| **2** | Completed with **review required** (or secrets found in `--check` mode) |
 | **3** | **Unsupported** input (nothing safe produced, e.g. TOML/binary-only) |
+
+### Pre-commit and CI
+
+Install the binary (`cargo install --path crates/cli`), then in another repo:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/Bharath-code/secret-scrub
+    rev: main   # pin to a tag/sha in production
+    hooks:
+      - id: secretscrub
+```
+
+Hook definition lives in [`.pre-commit-hooks.yaml`](.pre-commit-hooks.yaml) (`secretscrub scrub --check` on text files).
+
+GitHub Actions example:
+
+```yaml
+- name: Install SecretScrub
+  run: cargo install --path crates/cli --locked
+- name: Check for secrets
+  run: secretscrub scrub --check $(git ls-files)
+```
+
+`--check` never creates or modifies files. Stderr reports detector types and counts only (never secret values).
 
 ### Limits (folder / large input)
 

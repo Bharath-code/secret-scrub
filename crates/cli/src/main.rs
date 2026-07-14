@@ -49,12 +49,18 @@ enum OutputFormat {
 enum Commands {
     /// Scrub a file, directory, or stdin (local only)
     Scrub {
-        /// Input file or directory. If omitted, read stdin.
-        path: Option<PathBuf>,
+        /// Input file(s) or directory. If omitted, read stdin.
+        /// Multiple paths are only valid with `--check` (pre-commit / CI).
+        #[arg(num_args = 0..)]
+        path: Vec<PathBuf>,
 
         /// Write safe copy (file) or safe tree (directory) here. Default for files: stdout.
         #[arg(short = 'o', long = "output")]
         output: Option<PathBuf>,
+
+        /// Detection only: no safe copy written. Report types/counts on stderr; exit 2 if findings.
+        #[arg(long = "check", conflicts_with = "output")]
+        check: bool,
 
         /// Write machine-readable safety summary JSON to this path (never includes secret values).
         #[arg(long = "summary")]
@@ -123,6 +129,8 @@ struct ScrubRun {
     format: OutputFormat,
     limits: WorkspaceLimits,
     progress: bool,
+    /// Detection-only: no safe copy; stderr type report; findings → exit 2.
+    check: bool,
 }
 
 fn run() -> Result<ExitCodeKind, String> {
@@ -136,6 +144,7 @@ fn run() -> Result<ExitCodeKind, String> {
         Commands::Scrub {
             path,
             output,
+            check,
             summary,
             force,
             format,
@@ -159,14 +168,86 @@ fn run() -> Result<ExitCodeKind, String> {
                 limits.max_line_length = l;
             }
             scrub_command(ScrubRun {
-                path,
+                path: match path.len() {
+                    0 => None,
+                    1 => Some(path.into_iter().next().unwrap()),
+                    _ if check => {
+                        // Multi-file check: run each path and take the worst exit code.
+                        return multi_check(path, ScrubRun {
+                            path: None,
+                            output: None,
+                            summary_path: summary,
+                            force,
+                            format,
+                            limits,
+                            progress,
+                            check: true,
+                        });
+                    }
+                    _ => {
+                        return Err(
+                            "multiple paths require --check (or pass a single file/directory)"
+                                .into(),
+                        );
+                    }
+                },
                 output,
                 summary_path: summary,
                 force,
                 format,
                 limits,
                 progress,
+                check,
             })
+        }
+    }
+}
+
+fn multi_check(paths: Vec<PathBuf>, base: ScrubRun) -> Result<ExitCodeKind, String> {
+    if base.summary_path.is_some() {
+        return Err(
+            "--summary with multiple --check paths is not supported; check one path at a time"
+                .into(),
+        );
+    }
+    let mut worst = ExitCodeKind::Clean;
+    for p in paths {
+        let run = ScrubRun {
+            path: Some(p),
+            ..base.clone_opts()
+        };
+        let code = scrub_command(run)?;
+        worst = worse_exit(worst, code);
+    }
+    Ok(worst)
+}
+
+fn worse_exit(a: ExitCodeKind, b: ExitCodeKind) -> ExitCodeKind {
+    // Prefer failure > unsupported > review > clean for CI gating.
+    let rank = |k: ExitCodeKind| match k {
+        ExitCodeKind::Clean => 0,
+        ExitCodeKind::ReviewRequired => 1,
+        ExitCodeKind::Unsupported => 2,
+        ExitCodeKind::Failure => 3,
+    };
+    if rank(b) > rank(a) {
+        b
+    } else {
+        a
+    }
+}
+
+impl ScrubRun {
+    fn clone_opts(&self) -> Self {
+        Self {
+            path: None,
+            output: self.output.clone(),
+            summary_path: self.summary_path.clone(),
+            force: self.force,
+            format: self.format.clone(),
+            limits: self.limits.clone(),
+            progress: self.progress,
+            check: self.check,
         }
     }
 }
@@ -288,6 +369,10 @@ fn finish_single(
     );
     seal_single_file(&mut summary, &result.text);
 
+    if run.check {
+        return finish_check(&summary, fully_unsupported, run);
+    }
+
     match run.format {
         OutputFormat::Json => {
             if let Some(ref dest) = run.output {
@@ -379,6 +464,12 @@ fn scrub_dir(root: &Path, run: &ScrubRun) -> Result<ExitCodeKind, String> {
         return Err("scrub cancelled".into());
     }
 
+    let summary = workspace_summary(&result);
+    let fully_unsupported = result.is_fully_unsupported();
+
+    if run.check {
+        return finish_check(&summary, fully_unsupported, run);
+    }
     let mut summary = workspace_summary(&result);
     seal_workspace(&mut summary, &result);
 
@@ -422,9 +513,62 @@ fn scrub_dir(root: &Path, run: &ScrubRun) -> Result<ExitCodeKind, String> {
 
     Ok(ExitCodeKind::from_statuses(
         result.safety_status,
-        result.is_fully_unsupported(),
+        fully_unsupported,
         false,
     ))
+}
+
+/// Detection-only path: never writes a safe copy; optional summary; stderr type report.
+fn finish_check(
+    summary: &SafetySummary,
+    fully_unsupported: bool,
+    run: &ScrubRun,
+) -> Result<ExitCodeKind, String> {
+    // Optional summary only when explicitly requested.
+    if let Some(ref sp) = run.summary_path {
+        write_safety_summary(sp, summary, run.force).map_err(export_err)?;
+    }
+
+    if matches!(run.format, OutputFormat::Json) {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(summary).map_err(|e| e.to_string())?
+        );
+    } else {
+        print_check_report(summary);
+    }
+
+    if fully_unsupported {
+        return Ok(ExitCodeKind::Unsupported);
+    }
+    if !summary.findings.is_empty()
+        || summary.safety_status == SafetyStatus::ReviewRequired
+    {
+        return Ok(ExitCodeKind::ReviewRequired);
+    }
+    Ok(ExitCodeKind::Clean)
+}
+
+/// One line per detector type on stderr: types and counts only (never values).
+fn print_check_report(summary: &SafetySummary) {
+    if summary.findings.is_empty() {
+        return;
+    }
+    // Aggregate: type → (distinct placeholders, total occurrences)
+    use std::collections::BTreeMap;
+    let mut by_type: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    for f in &summary.findings {
+        let entry = by_type.entry(f.detector_type.as_str()).or_insert((0, 0));
+        entry.0 += 1;
+        entry.1 += f.occurrences;
+    }
+    for (dtype, (distinct, occurrences)) in by_type {
+        eprintln!(
+            "{dtype}: {distinct} distinct value{} ({occurrences} occurrence{})",
+            if distinct == 1 { "" } else { "s" },
+            if occurrences == 1 { "" } else { "s" }
+        );
+    }
 }
 
 fn workspace_summary(result: &WorkspaceResult) -> SafetySummary {
