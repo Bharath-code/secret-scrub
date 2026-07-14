@@ -7,6 +7,10 @@
 //!   3  unsupported (nothing safe produced)
 //!
 //! Processing never uploads content. Detection covers common patterns only.
+//!
+//! Also: `secretscrub mcp` — stdio MCP server exposing a local `scrub` tool.
+
+mod mcp;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use secretscrub_core::{
@@ -108,6 +112,11 @@ enum Commands {
         #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
     },
+
+    /// Run as a stdio MCP server (tool: scrub). Local only; no network, no file paths.
+    ///
+    /// Register with Claude Code: `claude mcp add secretscrub -- secretscrub mcp`
+    Mcp,
 }
 
 fn main() -> ExitCode {
@@ -199,6 +208,10 @@ fn run() -> Result<ExitCodeKind, String> {
                 progress,
                 check,
             })
+        }
+        Commands::Mcp => {
+            mcp::run_mcp_server()?;
+            Ok(ExitCodeKind::Clean)
         }
     }
 }

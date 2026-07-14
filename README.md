@@ -25,6 +25,7 @@ Full honesty policy: [`.scratch/secretscrub/TRUST.md`](.scratch/secretscrub/TRUS
 
 - **macOS desktop** — drop → scan → review → export  
 - **CLI** — path/stdin, machine-readable findings, automation-friendly exit codes  
+- **MCP server** — `secretscrub mcp` exposes a local `scrub` tool for AI agents  
 - **Free CLI / Pro desktop** — see business plan for packaging intent  
 
 ## Repository layout
@@ -116,6 +117,32 @@ GitHub Actions example:
 ```
 
 `--check` never creates or modifies files. Stderr reports detector types and counts only (never secret values).
+
+### MCP server (AI agents)
+
+`secretscrub mcp` speaks **MCP over stdio** (newline-delimited JSON-RPC). It exposes one tool, **`scrub`**, that redacts text in-process — **no network, no filesystem paths**. The agent passes content; each call is its own placeholder correlation scope.
+
+Register with [Claude Code](https://docs.anthropic.com/en/docs/claude-code):
+
+```bash
+# After installing the binary onto PATH
+claude mcp add secretscrub -- secretscrub mcp
+
+# Or from a cargo build without installing
+claude mcp add secretscrub -- cargo run -q -p secretscrub-cli -- mcp
+```
+
+Tool contract:
+
+| Field | Direction | Notes |
+| --- | --- | --- |
+| `text` | input (required) | UTF-8 text to scrub |
+| `format` | input (optional) | `plain` \| `json` \| `yaml` \| `env` |
+| `safe_text` | output | Redacted copy |
+| `findings` | output | Types, placeholders, counts only (never secret values) |
+| `safety_status` / `structure_status` / `rule_pack_version` | output | Same honesty model as CLI |
+
+Over-limit or empty input returns a **typed tool error** (`isError: true`) — never a partial result marked safe. Same size/line limits as stdin scrubs (default 10 MiB / 1 MiB per line).
 
 ### Limits (folder / large input)
 

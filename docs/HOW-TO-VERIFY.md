@@ -109,6 +109,18 @@ cargo run -q -p secretscrub-cli -- scrub ./fixtures/multi_secret.txt \
   --max-file-size 10
 ```
 
+### MCP server (`secretscrub mcp`)
+
+```bash
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"scrub","arguments":{"text":"key=AKIAIOSFODNN7EXAMPLE"}}}' \
+  | cargo run -q -p secretscrub-cli -- mcp
+```
+
+**Expect:** JSON-RPC responses; `safe_text` contains `[AWS_ACCESS_KEY#1]`; raw `AKIA…` never appears in any response line. Automated coverage: `cargo test -p secretscrub-cli --test mcp_blackbox`.
+
 ## 3. Install binary (optional)
 
 ```bash
@@ -128,6 +140,7 @@ secretscrub scrub ./fixtures/multi_secret.txt -o /tmp/multi.safe.txt
 | Folder scrub | Safe tree written; shared placeholders |
 | Exit codes | 0 / 2 / 3 as above |
 | Summary / `--format json` | No raw `AKIA…` (or other fixture secrets) in JSON |
+| `secretscrub mcp` scrub tool | Redacts text; envelope has no secret values |
 
 ## Related docs
 

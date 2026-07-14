@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 secretscrub-core = { workspace = true }
 clap = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
