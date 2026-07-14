@@ -14,3 +14,5 @@ serde_norway = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 walkdir = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }

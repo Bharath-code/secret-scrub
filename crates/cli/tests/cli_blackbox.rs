@@ -87,6 +87,160 @@ fn summary_json_shape_no_secrets() {
     assert!(body.contains("rule_pack_version"));
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert!(v.get("findings").is_some());
+    assert!(v.get("content_sha256").is_some());
+    assert_eq!(
+        v.get("hash_scheme").and_then(|x| x.as_str()),
+        Some("sha256-single-v1")
+    );
+    assert!(v.get("created_at").is_some());
+}
+
+#[test]
+fn verify_round_trip_single_file() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("in.log");
+    let dest = dir.path().join("out.log");
+    let summary = dir.path().join("summary.json");
+    fs::write(&src, format!("{AWS}\n")).unwrap();
+
+    cargo_bin_cmd!("secretscrub")
+        .args([
+            "scrub",
+            src.to_str().unwrap(),
+            "-o",
+            dest.to_str().unwrap(),
+            "--summary",
+            summary.to_str().unwrap(),
+        ])
+        .assert()
+        .code(0);
+
+    cargo_bin_cmd!("secretscrub")
+        .args([
+            "verify",
+            dest.to_str().unwrap(),
+            "--summary",
+            summary.to_str().unwrap(),
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("verify ok"));
+}
+
+#[test]
+fn verify_fails_on_tampered_safe_copy() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("in.log");
+    let dest = dir.path().join("out.log");
+    let summary = dir.path().join("summary.json");
+    fs::write(&src, format!("{AWS}\n")).unwrap();
+
+    cargo_bin_cmd!("secretscrub")
+        .args([
+            "scrub",
+            src.to_str().unwrap(),
+            "-o",
+            dest.to_str().unwrap(),
+            "--summary",
+            summary.to_str().unwrap(),
+        ])
+        .assert()
+        .code(0);
+
+    // Tamper one byte of the safe copy.
+    let mut body = fs::read_to_string(&dest).unwrap();
+    body.push('x');
+    fs::write(&dest, body).unwrap();
+
+    cargo_bin_cmd!("secretscrub")
+        .args([
+            "verify",
+            dest.to_str().unwrap(),
+            "--summary",
+            summary.to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("verify failed"));
+}
+
+#[test]
+fn verify_round_trip_workspace() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.log"), format!("a={AWS}\n")).unwrap();
+    fs::write(dir.path().join("b.log"), format!("b=clean\n")).unwrap();
+    let out = dir.path().join("safe");
+    let summary = dir.path().join("summary.json");
+
+    cargo_bin_cmd!("secretscrub")
+        .args([
+            "scrub",
+            dir.path().to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--summary",
+            summary.to_str().unwrap(),
+        ])
+        .assert()
+        .code(0);
+
+    let body = fs::read_to_string(&summary).unwrap();
+    assert!(!body.contains(AWS));
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        v.get("hash_scheme").and_then(|x| x.as_str()),
+        Some("sha256-workspace-v1")
+    );
+    assert!(v.get("content_sha256").is_some());
+
+    cargo_bin_cmd!("secretscrub")
+        .args([
+            "verify",
+            out.to_str().unwrap(),
+            "--summary",
+            summary.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("\"ok\": true"));
+}
+
+#[test]
+fn verify_fails_on_tampered_workspace_file() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.log"), format!("a={AWS}\n")).unwrap();
+    let out = dir.path().join("safe");
+    let summary = dir.path().join("summary.json");
+
+    cargo_bin_cmd!("secretscrub")
+        .args([
+            "scrub",
+            dir.path().to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--summary",
+            summary.to_str().unwrap(),
+        ])
+        .assert()
+        .code(0);
+
+    let tampered = out.join("a.log");
+    let mut body = fs::read_to_string(&tampered).unwrap();
+    body.push_str("tamper");
+    fs::write(&tampered, body).unwrap();
+
+    cargo_bin_cmd!("secretscrub")
+        .args([
+            "verify",
+            out.to_str().unwrap(),
+            "--summary",
+            summary.to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("a.log").or(predicate::str::contains("mismatch")));
 }
 
 #[test]

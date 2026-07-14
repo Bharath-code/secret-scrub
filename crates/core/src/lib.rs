@@ -2,6 +2,7 @@
 //!
 //! Processes content entirely in-process. Never transmits artifacts.
 
+mod attest;
 mod cancel;
 mod detect;
 mod export;
@@ -14,6 +15,10 @@ mod structure;
 mod types;
 mod workspace;
 
+pub use attest::{
+    load_summary, seal_single_file, seal_workspace, sha256_hex, verify_safe_copy,
+    VerifyError, VerifyReport, HASH_SCHEME_SINGLE_V1, HASH_SCHEME_WORKSPACE_V1,
+};
 pub use cancel::{CancelFlag, ProgressEvent};
 pub use export::{atomic_write, ensure_not_source, write_safety_summary, ExportError};
 pub use format::{format_from_path, looks_binary, ContentFormat};

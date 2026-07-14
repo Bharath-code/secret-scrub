@@ -92,9 +92,15 @@ pub struct FileReport {
     pub structure_status: StructureStatus,
     pub safety_status: SafetyStatus,
     pub findings_count: usize,
+    /// SHA-256 (hex) of the exported safe file bytes when the file was written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
 }
 
 /// Machine-readable safety summary written next to an export.
+///
+/// When sealed for attestation, includes content hash(es), `hash_scheme`, and
+/// `created_at` so a recipient can run `secretscrub verify`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SafetySummary {
     pub product_version: String,
@@ -109,6 +115,15 @@ pub struct SafetySummary {
     pub files: Option<Vec<FileReport>>,
     /// Human-readable limits disclaimer (non-claim language).
     pub disclaimer: String,
+    /// Self-describing hash construction id (e.g. `sha256-single-v1`).
+    #[serde(default)]
+    pub hash_scheme: String,
+    /// Aggregate content SHA-256 (hex) of the exported safe copy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_sha256: Option<String>,
+    /// UTC time the summary was sealed (RFC 3339).
+    #[serde(default)]
+    pub created_at: String,
 }
 
 impl SafetySummary {
@@ -151,6 +166,9 @@ impl SafetySummary {
             findings: summary_findings,
             files,
             disclaimer: "SecretScrub redacts common patterns locally. It cannot guarantee every sensitive value is found. Review the safe copy before sharing.".to_string(),
+            hash_scheme: String::new(),
+            content_sha256: None,
+            created_at: String::new(),
         }
     }
 }
